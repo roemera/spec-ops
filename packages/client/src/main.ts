@@ -282,7 +282,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     net.sendFire(b.id, arr(origin), arr(vel));
     if (!scoped()) fx.muzzleFlash(vm.muzzle.getWorldPosition(new THREE.Vector3()), new THREE.Vector3(0, 0, -1), overlay);
     audio.play('shot');
-    if (rifle.mag > 0) setTimeout(() => audio.play('bolt', { volume: 0.6 }), 180);
+    if (rifle.mag > 0) setTimeout(() => audio.play('bolt', { volume: 0.9 }), 180);
     else if (rifle.reload()) setTimeout(() => audio.play('reload'), 300);
     recoil += RECOIL_PITCH * (player.stance === 'prone' ? 0.5 : 1);
     kick = 1;
@@ -655,7 +655,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       bullets.step(STEP);
       acc -= STEP;
     }
-    if (rifle.update(dt) === 'reloaded') audio.play('magIn', { volume: rifle.active === 'perfect' ? 1.2 : 0.8 });
+    if (rifle.update(dt) === 'reloaded') audio.play('magIn', { volume: rifle.active === 'perfect' ? 1.3 : 1 });
     collectPickups();
     updateAim(dt);
     footsteps();

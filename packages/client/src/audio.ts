@@ -113,18 +113,20 @@ const mech = (events: MechEvent[]): Gen => {
   const rng = makeRng(events.length * 131 + Math.round(events[0].f)).next;
   const parts = events.map((e) => {
     const decay = e.decay ?? 85;
-    const modes = [1, 2.756, 5.404, 8.933].filter((k) => e.f * k < 16000);
+    const modes = [1, 2.756, 5.404, 8.933].filter((k) => e.f * 0.55 * k < 12000);
     const flam = [0, 0.0012 + rng() * 0.003, 0.004 + rng() * 0.004];
     return {
       e,
       flam,
-      bank: modes.map((k, i) => resonator(e.f * k * (0.97 + rng() * 0.06), decay * (1 + i * 0.6))),
-      body: [resonator(1150, 130), resonator(1900, 170)],
-      hp: biquad('highpass', 900),
+      bank: modes.map((k, i) => resonator(e.f * 0.55 * k * (0.97 + rng() * 0.06), decay * (1 + i * 0.6))),
+      // The receiver and stock taking the hit: heavily damped, so it adds weight without ringing hollow.
+      body: [resonator(160, 320), resonator(620, 240), resonator(1200, 180)],
+      hp: biquad('highpass', 500),
+      lp: biquad('lowpass', 4500),
       end: e.at + (e.len ?? 0) + 0.25,
     };
   });
-  const hp = biquad('highpass', 450);
+  const hp = biquad('highpass', 70), lp = biquad('lowpass', 8000, 0.6);
   return (t, r) => {
     let out = 0;
     for (const p of parts) {
@@ -147,10 +149,10 @@ const mech = (events: MechEvent[]): Gen => {
       x *= e.amp;
       let ring = 0;
       for (let i = 0; i < p.bank.length; i++) ring += p.bank[i](x) / (1 + i);
-      const body = (e.body ?? 0) * (p.body[0](x) + 0.6 * p.body[1](x));
-      out += p.hp(x) * 2.4 + ring * 0.3 + body * 0.25;
+      const body = (0.25 + (e.body ?? 0)) * (p.body[0](x) * 0.5 + p.body[1](x) + 0.6 * p.body[2](x));
+      out += p.lp(p.hp(x)) * 4 + ring * 0.45 + body * 0.6;
     }
-    return hp(out);
+    return lp(hp(out));
   };
 };
 
@@ -303,7 +305,7 @@ export const GENERATORS: Record<SoundName, SoundDef> = {
     seconds: 0.4,
     gen: () => {
       const m = mech([
-        { at: 0.004, f: 1700, amp: 1.4, body: 1.2 },
+        { at: 0.004, f: 1700, amp: 1.0, body: 1.0 },
         { at: 0.014, f: 3400, amp: 0.7 },
       ]);
       const skin = lowpass(0.2);
