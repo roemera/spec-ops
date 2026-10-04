@@ -137,7 +137,7 @@ export class Enemies {
       root.rotation.y = yaw;
       // Footsteps when a foot comes down: their boots in the snow, so you can hear a patrol coming.
       if (e.model.pose(e.stance, pitch, e.walked, e.speed, dt)) {
-        const volume = e.speed > 2.5 ? 0.3 : 0.16; // soft: a patrol close by, not a parade
+        const volume = e.speed > 2.5 ? 0.12 : 0.06; // faint: you hear a patrol only when it's close
         this.audio.play('step', { pos: pos.clone().setY(pos.y + STANCES[e.stance].height * 0.1), volume, rate: 0.85 + Math.random() * 0.2 });
       }
       root.updateMatrixWorld(true); // hit tests this frame use the new pose

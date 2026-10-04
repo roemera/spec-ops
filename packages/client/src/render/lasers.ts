@@ -9,12 +9,14 @@ import { PAL } from './palette';
 // Enemy laser sights: a red line from every enemy rifle to whatever it points at, so you can see
 // where they look. Thin and faint while patrolling, stronger when suspicious or searching (their
 // scanning sweeps it about), bold once alert. A laser pointed straight at your eyes shows as a red
-// glare at its rifle. Direction and length are smoothed so the lines glide rather than flicker.
+// glare at its rifle. Direction and length are smoothed so the lines glide rather than flicker, and
+// each beam fades out over the last few metres before your eyes.
 
 const RANGE = 350; // m
 const GLARE_ANGLE = (3 * Math.PI) / 180; // rad off your eyes at which the glare starts
 const TURN_SMOOTH = 6; // 1/s: how quickly a laser follows its rifle
 const LENGTH_SMOOTH = 8; // 1/s: how quickly its length follows what it hits
+const NEAR_FADE = [2, 15]; // m from your eyes: beams fade out over this, so one aimed at you doesn't fill the view
 
 export interface LaserSource {
   id: number;
@@ -36,6 +38,14 @@ export class Lasers {
   constructor(private scene: THREE.Scene, private physics: RAPIER.World) {
     const make = (width: number, opacity: number) => {
       const mat = new LineMaterial({ color: PAL.enemy, linewidth: width, transparent: true, opacity, fog: true, depthWrite: false });
+      // Fade near the camera, using the view depth the line shader already passes along for fog.
+      mat.onBeforeCompile = (shader) => {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <fog_fragment>',
+          `#include <fog_fragment>
+          gl_FragColor.a *= smoothstep(${NEAR_FADE[0].toFixed(1)}, ${NEAR_FADE[1].toFixed(1)}, vFogDepth);`,
+        );
+      };
       const line = new LineSegments2(new LineSegmentsGeometry(), mat);
       line.frustumCulled = false;
       line.renderOrder = 1;

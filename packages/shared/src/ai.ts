@@ -294,7 +294,7 @@ export class EnemyAi {
     const from = eye(e), chest = chestOf(p);
     const d = Math.hypot(p.pos.x - e.pos.x, p.pos.z - e.pos.z);
     const vis = Math.max(this.obstacles.see(from, chest), this.obstacles.see(from, headOf(p)));
-    if (vis > 0.2 && d < ENEMY_FIRE_RANGE) {
+    if (vis > 0.3 && d < ENEMY_FIRE_RANGE) { // a pine's branches between you are enough to hold their fire
       // In sight: take a knee (or not), aim, fire.
       e.lastKnown = { ...p.pos };
       e.lostT = 0;

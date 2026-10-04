@@ -157,7 +157,11 @@ export function generateMap(seed: number): GameMap {
     const tx = fx - ix, tz = fz - iz;
     const h00 = heights[iz * n + ix], h10 = heights[iz * n + ix + 1];
     const h01 = heights[(iz + 1) * n + ix], h11 = heights[(iz + 1) * n + ix + 1];
-    return h00 * (1 - tx) * (1 - tz) + h10 * tx * (1 - tz) + h01 * (1 - tx) * tz + h11 * tx * tz;
+    // Exactly on the flat triangles everyone draws and walks on (each cell is split along its
+    // (1,0)-(0,1) diagonal, as in world.ts and Rapier's heightfield), so a crest that hides you on
+    // screen hides you from the enemy too.
+    if (tx + tz <= 1) return h00 + (h10 - h00) * tx + (h01 - h00) * tz;
+    return h11 + (h01 - h11) * (1 - tx) + (h10 - h11) * (1 - tz);
   };
   /** Rise over run at a point. */
   const slopeAt = (x: number, z: number) => {

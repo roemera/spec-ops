@@ -18,7 +18,7 @@ type Shape =
   | { k: 'capsule'; a: Vec3; b: Vec3; r: number; move: boolean };
 
 const CELL = 8; // m
-const TERRAIN_STEP = 2; // m between ground checks along a sight line
+const TERRAIN_STEP = 1; // m between ground checks along a sight line (terrain facets are 3.2 m)
 
 export class Obstacles {
   private shapes: Shape[] = [];
@@ -104,7 +104,7 @@ export class Obstacles {
   private along(ax: number, az: number, bx: number, bz: number, pad: number, out: Shape[]) {
     this.stamp++;
     out.length = 0;
-    const len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(len / (CELL / 2)));
+    const len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(len / (CELL / 4)));
     for (let i = 0; i <= n; i++) {
       const x = ax + ((bx - ax) * i) / n, z = az + ((bz - az) * i) / n;
       for (let gx = this.cell(x - pad); gx <= this.cell(x + pad); gx++) {
@@ -137,7 +137,8 @@ export class Obstacles {
       if (a.y + dy * t < this.map.heightAt(a.x + dx * t, a.z + dz * t)) return 0;
     }
     let vis = 1;
-    for (const s of this.along(a.x, a.z, b.x, b.z, 0, this.scratch)) {
+    // A little padding so shapes in cells the line only clips at a corner are still checked.
+    for (const s of this.along(a.x, a.z, b.x, b.z, 1, this.scratch)) {
       if (!crosses(s, a, dx, dy, dz)) continue;
       if (s.k === 'cyl' && s.soft) {
         vis *= this.foliage;
