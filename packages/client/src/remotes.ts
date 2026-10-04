@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import { INTERP_DELAY, STANCES, type HitZone, type SoldierState, type Stance } from '@spec-ops/shared';
+import { INTERP_DELAY, STANCES, type Life, type SoldierState, type Stance } from '@spec-ops/shared';
 import { buildSoldier, type SoldierModel } from './models/soldier';
 import { PAL } from './render/palette';
 import type { Audio } from './audio';
 
-// Other players: drawn INTERP_DELAY in the past, smoothed between the last two updates.
+// Other players (your squad): drawn INTERP_DELAY in the past, smoothed between the last two updates.
+// Bullets pass through them: there is no friendly fire.
 
 interface Snap {
   t: number; // local receive time, s
@@ -22,7 +23,7 @@ export interface Remote {
   id: number;
   model: SoldierModel;
   snaps: Snap[];
-  dead: boolean;
+  life: Life;
   stance: Stance;
   walked: number; // m, drives footsteps and the walk cycle
   nextStep: number;
@@ -44,7 +45,7 @@ export class Remotes {
     const model = buildSoldier(PAL.friend);
     model.root.position.set(...s.pos);
     this.scene.add(model.root);
-    const r: Remote = { id: s.id, model, snaps: [], dead: false, stance: s.stance, walked: 0, nextStep: STRIDE };
+    const r: Remote = { id: s.id, model, snaps: [], life: 'up', stance: s.stance, walked: 0, nextStep: STRIDE };
     this.byId.set(s.id, r);
     return r;
   }
@@ -56,34 +57,12 @@ export class Remotes {
     this.byId.delete(id);
   }
 
-  /** Dead: the body is gone (the caller shatters it) until `respawn`. */
-  kill(id: number) {
+  /** Up, down (lying in the snow, rolled on one side) or out (the body is gone; the caller shatters it). */
+  setLife(id: number, life: Life) {
     const r = this.byId.get(id);
     if (!r) return;
-    r.dead = true;
-    r.model.root.visible = false;
-  }
-
-  /** Back at a new spawn: drop old positions so they don't slide across the map. */
-  respawn(id: number) {
-    const r = this.byId.get(id);
-    if (!r) return;
-    r.dead = false;
-    r.snaps.length = 0;
-    r.model.root.visible = true;
-  }
-
-  /** Which living remote (and body part) a bullet step from `origin` along `dir` hits first. */
-  hitTest(origin: THREE.Vector3, dir: THREE.Vector3, len: number): { remote: Remote; t: number; zone: HitZone } | null {
-    let best: { remote: Remote; t: number; zone: HitZone } | null = null;
-    for (const r of this.byId.values()) {
-      if (r.dead) continue;
-      // Cheap reject: the segment doesn't pass near this soldier.
-      if (distToSegment(r.model.root.position, origin, dir, len) > 2.5) continue;
-      const h = r.model.hitTest(origin, dir, len);
-      if (h && (!best || h.t < best.t)) best = { remote: r, ...h };
-    }
-    return best;
+    r.life = life;
+    r.model.root.visible = life !== 'dead';
   }
 
   /** Pose every remote for render time `now - INTERP_DELAY`. */
@@ -92,7 +71,7 @@ export class Remotes {
     const pos = new THREE.Vector3();
     for (const r of this.byId.values()) {
       const s = r.snaps;
-      if (s.length === 0 || r.dead) continue;
+      if (s.length === 0 || r.life === 'dead') continue;
       while (s.length > 2 && s[1].t <= t) s.shift(); // keep the pair around t
       let yaw: number, pitch: number;
       if (s.length >= 2 && t >= s[0].t && t <= s[1].t) {
@@ -114,6 +93,7 @@ export class Remotes {
       if (moved < 3) r.walked += moved; // not a respawn jump
       r.model.root.position.copy(pos);
       r.model.root.rotation.y = yaw;
+      r.model.root.rotation.z = r.life === 'down' ? 0.9 : 0; // down: rolled onto one side
       const speed = Math.hypot(newest.vel.x, newest.vel.z);
       r.model.pose(r.stance, pitch, (r.walked / STRIDE) * Math.PI, Math.min(1, speed / 2), dt);
       // Footsteps: quieter crouched, almost silent prone.
@@ -125,12 +105,6 @@ export class Remotes {
       r.model.root.updateMatrixWorld(true); // hit tests this frame use the new pose
     }
   }
-}
-
-function distToSegment(p: THREE.Vector3, origin: THREE.Vector3, dir: THREE.Vector3, len: number) {
-  const v = p.clone().sub(origin);
-  const t = Math.max(0, Math.min(len, v.dot(dir)));
-  return v.sub(dir.clone().multiplyScalar(t)).length();
 }
 
 function lerpAngle(a: number, b: number, k: number) {

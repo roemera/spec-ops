@@ -10,7 +10,7 @@ import { Match, type Player } from './match.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const config = loadConfig(root);
-const match = new Match(config.mapSeed, config.killLimit);
+const match = new Match(config.mapSeed);
 
 const http = createServer(serveStatic(join(root, 'packages/client/dist')));
 const wss = new WebSocketServer({ server: http, path: '/ws' });
@@ -65,6 +65,8 @@ wss.on('connection', (ws: WebSocket, req) => {
       match.fire(player, msg);
     } else if (msg.t === 'hit' && player) {
       match.hit(player, msg);
+    } else if (msg.t === 'revive' && player) {
+      match.revive(player, msg.target);
     } else if (msg.t === 'start' && player) {
       console.log(`[start] #${player.id} ${player.name} started the match`);
       match.forceStart();
@@ -98,7 +100,7 @@ setInterval(() => {
 }, 1000 / AI_HZ);
 
 http.listen(config.port, () => {
-  console.log(`Spec Ops server on port ${config.port}, map seed ${config.mapSeed}, ${config.password ? 'password set' : 'NO password'}`);
+  console.log(`Spec Ops server on port ${config.port}, ${config.mapSeed ? `map seed ${config.mapSeed}` : `a new map every mission (first: ${match.seed})`}, ${config.password ? 'password set' : 'NO password'}`);
   console.log('Players open http://<this machine>:' + config.port + '   Commands: start, players, help');
 });
 
@@ -110,5 +112,5 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     console.log(match.phase === 'countdown' ? 'starting...' : `can't start (phase ${match.phase}, ${match.players.size} players)`);
   } else if (cmd === 'players') {
     console.log(`${match.phase}: ` + (match.list().map((p) => `#${p.id} ${p.name}${p.ready ? ' (ready)' : ''}`).join(', ') || 'nobody'));
-  } else if (cmd) console.log('commands: start (begin the match now), players');
+  } else if (cmd) console.log('commands: start (begin the mission now), players');
 });

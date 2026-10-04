@@ -6,7 +6,9 @@ from Call of Duty Spec Ops (snowy terrain, long sightlines, patrols to slip past
 The code started as a copy of Skeleton Crew (a multiplayer tank game). The soldier, rifle and look are
 new, and so is the procedural map (`mapgen.ts`: valley, forest, creek, route from start to extraction,
 outposts) and the enemy AI, which only the server runs (`ai.ts`, with `obstacles.ts` for line of sight).
-There is no offline mode. The PvP match flow (lobby, kill limit) is inherited and still to be replaced.
+There is no offline mode. Missions are co-op: no friendly fire, down/revive/bleed out, extraction
+when everyone standing is on the pad, a new map each mission (clients reload and rejoin to build it).
+Mission rules are plain logic in `server/src/match.ts`; test them in Node with fake players.
 
 ## Direction
 

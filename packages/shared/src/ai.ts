@@ -187,7 +187,7 @@ export class EnemyAi {
         if (angle < VIEW_HALF_ANGLE || dist < 3) {
           const vis = Math.max(this.obstacles.see(from, chestOf(p)), this.obstacles.see(from, headOf(p)));
           if (vis > 0) {
-            const distF = Math.max(0, 1 - (dist - 12) / (VIEW_RANGE - 12)) ** 1.5;
+            const distF = Math.max(0, 1 - (dist - 12) / (VIEW_RANGE - 12)) ** 2.2; // far away takes a lot longer
             const fovF = angle < 0.6 ? 1 : 0.45;
             const moveF = speed > 4 ? 1.6 : speed > 0.5 ? 1 : 0.4; // keeping still is the best camouflage
             rate = DETECT_RATE * Math.min(1, distF) * fovF * moveF * STANCE_SEEN[p.stance] * vis;
@@ -415,9 +415,9 @@ function plan(map: GameMap, obstacles: Obstacles): Enemy[] {
     }
     add(loop[0].x, map.heightAt(loop[0].x, loop[0].z), loop[0].z, 0, 'stand', { path: loop });
   }
-  // Roamers walking the route between outposts, there and back.
+  // Roamers walking the route between outposts, there and back (none near the insertion point).
   const r = map.route;
-  for (const [t0, t1] of [[0.18, 0.5], [0.5, 0.85]]) {
+  for (const [t0, t1] of [[0.4, 0.64], [0.64, 0.9]]) {
     const i0 = Math.floor(t0 * (r.length - 1)), i1 = Math.floor(t1 * (r.length - 1));
     const there: Point[] = [];
     for (let i = i0; i <= i1; i += 4) there.push(obstacles.push(r[i].x, r[i].z, RADIUS + 0.5));

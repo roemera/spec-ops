@@ -3,10 +3,10 @@
 A browser co-op game: a small squad against AI, in the spirit of the winter sniper mission from
 Call of Duty Spec Ops. Clean low poly look (think Superhot).
 
-**Status:** early. You play a soldier with a scoped bolt-action rifle in a procedurally generated snowy
-valley, from the insertion point to the extraction pad, past outposts held by enemy soldiers the server
-controls. The match flow (lobby, kill limit, friendly fire) is still the old free-for-all one until
-co-op missions arrive. There is no offline mode: run the server, even to play alone.
+**Status:** playable end to end. Up to 8 players form a squad with scoped bolt-action rifles and have
+to cross a procedurally generated snowy valley, from the insertion point to the extraction pad, past
+outposts held by enemy soldiers the server controls. Every mission is a new map. There is no offline
+mode: run the server, even to play alone.
 
 Stack: TypeScript, Three.js, Rapier (WebAssembly physics), Vite. Everything (map, models, textures) is generated in code.
 
@@ -23,9 +23,9 @@ npm start                                            # builds the game, serves i
 ```
 
 Everyone opens `http://<host ip>:8080`, enters a name and the password, and clicks READY.
-The match starts when everyone (2+) is ready, or when the host types `start` in the server console
-(works solo); any player can also press START NOW in the lobby. Forward TCP port 8080 on the host's router for players outside your network.
-`PORT`, `PASSWORD`, `MAP_SEED` and `KILL_LIMIT` environment variables override the config file.
+The mission starts when everyone is ready, or when anyone presses START NOW (or the host types `start`
+in the server console). Forward TCP port 8080 on the host's router for players outside your network.
+`PORT`, `PASSWORD` and `MAP_SEED` environment variables override the config file.
 
 **Developing:** `npm run dev` starts the game server (port 8080) and the Vite dev server together,
 then open http://localhost:5173 (Vite forwards the game connection to 8080). Without a
@@ -45,8 +45,23 @@ extraction pad on the opposite one (about 450 m away), past two to four outposts
 watchtower, sandbag walls) where the enemy will be. There is no marker: you get a bearing when you
 spawn, and orange smoke rises over the pad.
 
-The server picks a random seed when it starts, unless `mapSeed` in the config or `MAP_SEED` is set
-(the seed is printed when the server starts).
+Every mission gets a new random map, unless `mapSeed` in the config or `MAP_SEED` fixes one. The
+seed is printed when a mission starts. The first 40% of the route is quiet: no outposts or patrols
+near the insertion point.
+
+## The mission
+
+The whole squad starts at the insertion point. The mission is won when everyone still standing is
+on the extraction pad (nobody may be left down), and lost when nobody is standing. There is no
+friendly fire and no respawning:
+
+- At 0 health you go **down** and bleed out over 30 s. A teammate who holds **E** next to you for
+  3 s gets you up with 50 health (they can't move or shoot meanwhile).
+- If you bleed out you are **out** until the next mission.
+- Health comes back 5 s after the last hit.
+
+After the results (time, kills, revives, downs, accuracy) everyone goes back to the squad screen with
+a new map. Each page reloads itself to build the new map and rejoins on its own.
 
 ## The enemy
 
@@ -76,7 +91,8 @@ panel (for headless checks).
 | Right mouse (hold) | Scope (12x). Sway is smallest prone, largest standing or moving |
 | Left mouse | Fire. Work the bolt after every shot (1.1 s) |
 | R | Reload (5-round magazine, 20 spare) |
-| Tab | Scores (online) |
+| E (hold) | Revive a downed teammate next to you |
+| Tab | Scores |
 
 The rifle fires real bullets at 600 m/s with drop. The scope is zeroed at 100 m; the marks below the
 centre show where to hold for 200, 300 and 400 m. Moving targets need a lead.
@@ -97,8 +113,8 @@ packages/
   shared/   constants.ts (tuning), mapgen.ts (procedural map), rng.ts
   shared/   hitzones.ts (head/body/limb damage, Health), protocol.ts (messages, 36-byte soldier state,
             20-byte enemy state), ai.ts (the enemy), obstacles.ts (line of sight and walking round things)
-  server/   main.ts (http + WebSocket on one port, AI tick), match.ts (lobby, countdown, spawns, kills,
-            the enemy), config.ts
+  server/   main.ts (http + WebSocket on one port, AI tick), match.ts (lobby, countdown, the mission: down,
+            revive, extraction, results, new map; the enemy), config.ts
   client/   main.ts (loop: input, scope, breath, recoil, camera), sim/player.ts (character controller,
             stances), sim/rifle.ts (magazine, bolt, reload), sim/bullets.ts (ballistics),
             models/ (soldier, rifle), render/ (pipeline, palette), world.ts (terrain, instanced

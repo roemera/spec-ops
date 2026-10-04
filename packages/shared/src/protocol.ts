@@ -4,7 +4,7 @@ import { AI_STATES, type EnemyView } from './ai.ts';
 
 // Network messages. Rare messages are JSON; the 20 Hz soldier state is a 36-byte binary packet.
 
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 export const DEFAULT_PORT = 8080;
 export const STATE_HZ = 20;
 export const MAX_PLAYERS = 8;
@@ -13,11 +13,15 @@ export const COUNTDOWN_SECONDS = 3;
 
 export type Phase = 'lobby' | 'countdown' | 'live' | 'results';
 
+/** Up and fighting, down (bleeding out, can be revived), or out of this mission. */
+export type Life = 'up' | 'down' | 'dead';
+
 export interface Score {
   id: number;
   name: string;
-  kills: number;
-  deaths: number;
+  kills: number; // enemies
+  downs: number; // times this player went down
+  revives: number; // teammates this player got back up
   shots: number;
   hits: number;
 }
@@ -28,27 +32,30 @@ export interface PlayerInfo {
   id: number;
   name: string;
   ready: boolean;
+  life: Life;
 }
 
 export type ClientMsg =
   | { t: 'hello'; name: string; password: string; version: number }
   | { t: 'ready'; ready: boolean }
-  | { t: 'start' } // anyone in the lobby can start the match now
+  | { t: 'start' } // anyone in the lobby can start the mission now
+  | { t: 'revive'; target: number } // I held E next to this downed teammate for REVIVE_TIME
   | { t: 'fire'; shot: number; pos: Vec3; vel: Vec3 }
   | { t: 'hit'; shot: number; target: number; zone: HitZone; point: Vec3; dir: Vec3 }; // shooter-detected; target is a player or an enemy id
 
 export type ServerMsg =
   | { t: 'welcome'; id: number; seed: number; players: PlayerInfo[]; phase: Phase; spawn: number }
   | { t: 'reject'; reason: string }
-  | { t: 'lobby'; players: PlayerInfo[]; phase: Phase; countdown: number }
-  | { t: 'spawn'; spawn: number } // go to this spawn point now (match start)
+  | { t: 'lobby'; players: PlayerInfo[]; phase: Phase; countdown: number; seed: number } // seed: this (or the next) mission's map
+  | { t: 'spawn'; spawn: number } // go to this spawn point now (mission start)
   | { t: 'left'; id: number }
   | { t: 'fire'; from: number; shot: number; pos: Vec3; vel: Vec3 } // from: a player or an enemy id
   | { t: 'damage'; target: number; attacker: number; zone: HitZone; damage: number; health: number; point: Vec3 }
-  | { t: 'kill'; victim: number; killer: number; zone: HitZone; scores: Score[] }
-  | { t: 'respawn'; id: number } // that player is back (stand their body up again)
+  | { t: 'down'; id: number; by: number; zone: HitZone; bleedOut: number; scores: Score[] } // bleedOut: s left
+  | { t: 'revived'; id: number; by: number; health: number; scores: Score[] }
+  | { t: 'bledOut'; id: number; scores: Score[] } // out until the next mission
   | { t: 'enemyDown'; id: number; killer: number; zone: HitZone; dir: Vec3; scores: Score[] } // an enemy was killed
-  | { t: 'results'; scores: Score[]; winner: number; seconds: number };
+  | { t: 'results'; success: boolean; time: number; scores: Score[]; seconds: number }; // time: mission length, s
 
 // --- Binary soldier state ---
 

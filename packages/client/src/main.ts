@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
   BULLET_SPEED, BREATH_RECOVER, ENEMY_ID_BASE, GRAVITY, HIP_SPREAD, HOLD_BREATH, Health, PHYSICS_HZ, RECOIL_PITCH,
-  RECOIL_SETTLE, RESPAWN_DELAY, SCOPE_FOV, SCOPE_IN_TIME, SPAWN_PROTECTION, STATE_HZ, SWAY, ZONE_LABEL, generateMap,
+  EXTRACT_RADIUS, RECOIL_SETTLE, REVIVE_RANGE, REVIVE_TIME, SCOPE_FOV, SCOPE_IN_TIME, SPAWN_PROTECTION, STATE_HZ, SWAY,
+  ZONE_LABEL, generateMap, type Life,
   type Phase, type Score, type ServerMsg, type Stance,
 } from '@spec-ops/shared';
 import { Pipeline } from './render/pipeline';
@@ -19,7 +20,7 @@ import { Audio } from './audio';
 import { Enemies } from './enemies';
 import { Remotes } from './remotes';
 import { Net } from './net';
-import { Menu } from './ui/menu';
+import { Menu, rejoin, type JoinChoice } from './ui/menu';
 
 const params = new URLSearchParams(location.search);
 // ?join=host&name=X&password=Y joins a server directly.
@@ -32,7 +33,6 @@ const ADS_FOV = 55; // deg while raising the scope, before it snaps to the scope
 const MOUSE_SENS = 0.0022; // rad per pixel at BASE_FOV; scales with fov so the scope isn't twitchy
 const MESSAGE_TIME = 2.5; // s
 const BRIEFING_TIME = 7; // s the extraction bearing shows after spawning
-const EXTRACT_RADIUS = 6; // m from the pad's centre counts as extracted
 const STRIDE = 0.75; // m per footstep
 const STANCE_STEADY: Record<Stance, number> = { stand: 1, crouch: 0.6, prone: 0.25 }; // sway and spread
 const ZERO_RANGE = 100; // m: the scope is zeroed here (bullets cross the crosshair at this range)
@@ -51,12 +51,14 @@ async function start() {
   const menu = new Menu();
   let error = '';
   for (;;) {
+    // Straight in after a mission (the page reloaded for the new map), or from the URL, or ask.
+    const again = error ? null : rejoin.take();
     const choice = params.has('join')
       ? { server: params.get('join')!, name: params.get('name') ?? 'TEST', password: params.get('password') ?? '' }
-      : await menu.join(error);
+      : again ?? (await menu.join(error));
     try {
       const { net, welcome } = await Net.connect(choice.server, choice.name, choice.password);
-      return runGame(menu, net, welcome);
+      return runGame(menu, net, welcome, choice);
     } catch (e) {
       error = String(e).toUpperCase();
       if (params.has('join')) params.delete('join'); // fall back to the menu
@@ -70,7 +72,7 @@ function bearingName(x: number, z: number) {
   return ['NORTH', 'NORTHEAST', 'EAST', 'SOUTHEAST', 'SOUTH', 'SOUTHWEST', 'WEST', 'NORTHWEST'][Math.round(deg / 45) % 8];
 }
 
-function runGame(menu: Menu, net: Net, welcome: Welcome) {
+function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   const seed = welcome.seed;
   const viewCanvas = document.getElementById('view') as HTMLCanvasElement;
   const hudCanvas = document.getElementById('hud') as HTMLCanvasElement;
@@ -119,18 +121,20 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
 
   // The server owns health; we mirror ours (healing at the same rate) and show what it tells us.
   const health = new Health();
-  let dead: { killer: string; zone: string; until: number } | null = null;
+  // Your life this mission: up, down (bleeding out until a teammate revives you) or out.
+  let life: Life = 'up';
+  let down: { by: string; zone: string; until: number } | null = null;
   let protectedUntil = 0, hurtAt = -10;
   let scores: Score[] = [];
   const names = new Map<number, string>();
   const nameOf = (id: number) => (id >= ENEMY_ID_BASE ? 'THE ENEMY' : (names.get(id) ?? `PLAYER ${id}`));
   const zeroScores = (players: Array<{ id: number; name: string }>) =>
-    players.map(({ id, name }) => ({ id, name, kills: 0, deaths: 0, shots: 0, hits: 0 }));
+    players.map(({ id, name }) => ({ id, name, kills: 0, downs: 0, revives: 0, shots: 0, hits: 0 }));
   for (const p of welcome.players) names.set(p.id, p.name);
   scores = zeroScores(welcome.players);
   if (phase === 'live') protectedUntil = SPAWN_PROTECTION; // joined mid-match
-  /** You can move and shoot: match live and not dead. */
-  const controlling = () => playing() && !dead;
+  /** You can move and shoot: mission on and you're up. */
+  const controlling = () => playing() && life === 'up';
   const arr = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
 
   let time = 0;
@@ -139,33 +143,28 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
 
   // The mission: get from the insertion point to the extraction pad. No marker: a bearing at the
   // start, then the orange smoke over the pad.
-  let missionStart = 0, extracted = false;
   function brief() {
     const p = player.pos, e = map.extract;
     const dist = Math.round(Math.hypot(e.x - p.x, e.z - p.z) / 10) * 10;
     say(`EXTRACTION  ${bearingName(e.x - p.x, e.z - p.z)}  ${dist} M  ·  FOLLOW THE ORANGE SMOKE`, HUD_COLORS.signal, BRIEFING_TIME);
-    missionStart = time;
-    extracted = false;
   }
-  function checkExtraction() {
-    if (extracted || !controlling()) return;
-    if (Math.hypot(player.pos.x - map.extract.x, player.pos.z - map.extract.z) > EXTRACT_RADIUS) return;
-    extracted = true;
-    const s = Math.round(time - missionStart);
-    say(`EXTRACTED  ·  ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, HUD_COLORS.signal, 6);
-    audio.jingle(true);
+  /** The server ends the mission when everyone standing is on the pad; until then, say who we wait for. */
+  function onThePad() {
+    if (!controlling() || Math.hypot(player.pos.x - map.extract.x, player.pos.z - map.extract.z) > EXTRACT_RADIUS) return;
+    const away = [...remotes.byId.values()].filter((r) => r.life === 'down' || (r.life === 'up' && r.model.root.position.distanceTo(new THREE.Vector3(map.extract.x, r.model.root.position.y, map.extract.z)) > EXTRACT_RADIUS));
+    if (away.length) say(`ON THE PAD  ·  WAITING FOR ${away.map((r) => nameOf(r.id)).join(', ')}`, HUD_COLORS.signal, 0.3);
   }
   let hitMarker: { at: number; kill: boolean } | null = null;
   const mark = (kill: boolean) => (hitMarker = { at: time, kill });
 
   // --- Shooting ---
 
-  /** Targets are ids: players 1..8, enemies from ENEMY_ID_BASE. */
+  /** Targets are enemy ids (from ENEMY_ID_BASE). */
   const bullets = new Bullets(
     physics,
     (origin, dir, len): SoldierHit | null => {
-      const r = remotes.hitTest(origin, dir, len), e = enemies.hitTest(origin, dir, len);
-      if (r && (!e || r.t < e.t)) return { t: r.t, target: r.remote.id, zone: r.zone };
+      // Only the enemy: bullets pass through your squad (no friendly fire).
+      const e = enemies.hitTest(origin, dir, len);
       if (e) return { t: e.t, target: e.enemy.id, zone: e.zone };
       return null;
     },
@@ -182,7 +181,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
     fx.endTrail(b.id, point);
     audio.play('hit', { pos: point });
     // A wound here; the shooter reports it and the server decides what it did.
-    fx.wound(point, dir, hit.target >= ENEMY_ID_BASE ? PAL.enemy : PAL.friend);
+    fx.wound(point, dir, PAL.enemy);
     if (b.visual) return;
     net.sendHit(b.id, hit.target, hit.zone, arr(point), arr(dir));
     lastHit = { target: hit.target, zone: hit.zone, range: Math.round(b.start.distanceTo(point)) };
@@ -254,26 +253,35 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
   {
     const showLobby = (players: Parameters<Menu['lobby']>[0], countdown: number) =>
       menu.lobby(players, phase, countdown, net.id, (ready) => net.setReady(ready), () => net.startMatch());
-    if (phase !== 'live') showLobby(welcome!.players, 0);
+    if (phase !== 'live') showLobby(welcome.players, 0);
     else menu.hide();
+    for (const p of welcome.players) if (p.id !== net.id) remotes.setLife(p.id, p.life);
     net.onMessage = (msg) => {
       if (msg.t === 'lobby') {
-        for (const p of msg.players) names.set(p.id, p.name);
+        // A new mission has a new map: rejoin from a fresh page to build it.
+        if (msg.seed !== seed && msg.phase === 'lobby') {
+          rejoin.save(choice);
+          location.reload();
+          return;
+        }
+        for (const p of msg.players) {
+          names.set(p.id, p.name);
+          if (p.id !== net.id) remotes.setLife(p.id, p.life);
+        }
         if (msg.phase === 'live' && phase !== 'live') {
-          // New match: fresh scores, and everyone is back on their feet.
+          // Mission start: fresh scores, everyone up.
           scores = zeroScores(msg.players);
-          for (const id of remotes.byId.keys()) remotes.respawn(id);
           enemies.clear(); // the server stood them all up again
         }
         phase = msg.phase;
         if (phase === 'live') menu.hide();
         else if (phase !== 'results') {
-          dead = null;
           input.unlock();
           showLobby(msg.players, msg.countdown);
         }
       } else if (msg.t === 'spawn') {
-        dead = null;
+        life = 'up';
+        down = null;
         health.reset();
         protectedUntil = time + SPAWN_PROTECTION;
         const sp = map.spawns[msg.spawn];
@@ -306,31 +314,47 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
           const range = lastHit?.target === msg.id ? `  ·  ${lastHit.range} M` : '';
           say(`${ZONE_LABEL[msg.zone]}${range}`, HUD_COLORS.red);
         }
-      } else if (msg.t === 'kill') {
+      } else if (msg.t === 'down') {
         scores = msg.scores;
-        const killer = nameOf(msg.killer), victim = nameOf(msg.victim);
-        if (msg.victim === net.id) {
-          dead = { killer, zone: ZONE_LABEL[msg.zone], until: time + RESPAWN_DELAY };
+        if (msg.id === net.id) {
+          life = 'down';
+          down = { by: nameOf(msg.by), zone: ZONE_LABEL[msg.zone], until: time + msg.bleedOut };
           health.health = 0;
           scopeT = 0;
+          player.setStance('prone');
         } else {
-          const r = remotes.byId.get(msg.victim);
-          if (r && !r.dead) {
+          remotes.setLife(msg.id, 'down');
+          say(`${nameOf(msg.id)} IS DOWN  ·  HOLD E NEXT TO THEM`, HUD_COLORS.red, 4);
+        }
+      } else if (msg.t === 'revived') {
+        scores = msg.scores;
+        if (msg.id === net.id) {
+          life = 'up';
+          down = null;
+          health.health = msg.health;
+          health.sinceHit = 0;
+          say(`${nameOf(msg.by)} GOT YOU UP`);
+        } else {
+          remotes.setLife(msg.id, 'up');
+          say(msg.by === net.id ? `YOU GOT ${nameOf(msg.id)} UP` : `${nameOf(msg.by)} GOT ${nameOf(msg.id)} UP`);
+        }
+      } else if (msg.t === 'bledOut') {
+        scores = msg.scores;
+        if (msg.id === net.id) life = 'dead';
+        else {
+          const r = remotes.byId.get(msg.id);
+          if (r && r.life !== 'dead') {
             fx.shatter(r.model.parts, new THREE.Vector3(), PAL.friend);
             audio.play('shatter', { pos: r.model.root.position.clone() });
           }
-          remotes.kill(msg.victim);
-          if (msg.killer === net.id) mark(true);
-          say(msg.killer === net.id ? `YOU KILLED ${victim}  ·  ${ZONE_LABEL[msg.zone]}` : `${killer} KILLED ${victim}`, msg.killer === net.id ? HUD_COLORS.red : HUD_COLORS.ink);
+          remotes.setLife(msg.id, 'dead');
+          say(`${nameOf(msg.id)} BLED OUT`, HUD_COLORS.red);
         }
-      } else if (msg.t === 'respawn') {
-        if (msg.id !== net.id) remotes.respawn(msg.id);
       } else if (msg.t === 'results') {
         scores = msg.scores;
-        dead = null;
         input.unlock();
-        menu.results(msg.scores, msg.winner, msg.seconds, net.id);
-        audio.jingle(msg.winner === net.id);
+        menu.results(msg.success, msg.time, msg.scores, msg.seconds, net.id);
+        audio.jingle(msg.success);
       }
     };
     net.onState = (st) => remotes.receive(st, time);
@@ -363,15 +387,45 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
   const move: MoveInput = { forward: 0, right: 0, sprint: false, jump: false, scoped: false };
   let wantScope = false;
 
+  /** The downed teammate within reach, if any, and how far along getting them up you are. */
+  let reviving: { id: number; progress: number } | null = null;
+  let reviveSentAt = -10;
+  function updateRevive(dt: number) {
+    let near: { id: number; d: number } | null = null;
+    for (const r of remotes.byId.values()) {
+      if (r.life !== 'down') continue;
+      const d = Math.hypot(r.model.root.position.x - player.pos.x, r.model.root.position.z - player.pos.z);
+      if (d <= REVIVE_RANGE && (!near || d < near.d)) near = { id: r.id, d };
+    }
+    if (!near || !controlling()) return void (reviving = null);
+    if (reviving?.id !== near.id) reviving = { id: near.id, progress: 0 };
+    // Hold E: you crouch over them and can't move or shoot until it's done.
+    if ((input.isHeld('KeyE') || reviveOverride) && time - reviveSentAt > 1) {
+      reviving.progress = Math.min(1, reviving.progress + dt / REVIVE_TIME);
+      move.forward = move.right = 0;
+      move.sprint = move.jump = false;
+      if (reviving.progress >= 1) {
+        net.sendRevive(near.id);
+        reviveSentAt = time;
+        reviving.progress = 0;
+      }
+    } else reviving.progress = 0;
+  }
+  let reviveOverride = false;
+
   function handleInput() {
     move.forward = move.right = 0;
     move.jump = move.sprint = false;
     wantScope = false;
     if (!controlling()) {
-      // Lobby/countdown/dead: input ignored.
+      // Lobby/countdown/down/out: you can only look around.
       input.takePresses();
       input.takeClicks();
-      input.takeMouse();
+      const [dx, dy] = input.takeMouse();
+      if (playing()) {
+        player.yaw -= dx * MOUSE_SENS;
+        player.pitch = Math.max(-1.2, Math.min(1.2, player.pitch - dy * MOUSE_SENS));
+      }
       return;
     }
     for (const code of input.takePresses()) {
@@ -398,8 +452,8 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
     const sens = MOUSE_SENS * (camera.fov / BASE_FOV);
     player.yaw -= dx * sens;
     player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - dy * sens));
-    // A click that captures the mouse is not also a shot.
-    if (clicks.some((c) => c.button === 0 && c.locked)) fire();
+    // A click that captures the mouse is not also a shot. Not while getting a teammate up.
+    if (clicks.some((c) => c.button === 0 && c.locked) && !reviving?.progress) fire();
   }
 
   /** Scope in/out, held breath, and the drift it steadies. */
@@ -434,10 +488,10 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
 
   function placeCamera(alpha: number) {
     player.feet(alpha, feet);
-    if (dead) {
-      // Down in the snow, looking along the ground.
-      camera.position.set(feet.x, feet.y + 0.25, feet.z);
-      euler.set(-0.1, player.yaw, 0.5);
+    if (life !== 'up') {
+      // Down in the snow, rolled on one side, looking along the ground.
+      camera.position.set(feet.x, feet.y + 0.3, feet.z);
+      euler.set(player.pitch * 0.5, player.yaw, 0.5);
     } else {
       camera.position.set(feet.x, feet.y + player.eye, feet.z);
       euler.set(player.pitch + sway.pitch + recoil, player.yaw + sway.yaw, 0);
@@ -453,7 +507,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
 
   /** The rifle in your hands: hip to eye with the scope, bob while walking, kick, bolt and reload moves. */
   function placeViewmodel(dt: number) {
-    vm.root.visible = !scoped() && !dead;
+    vm.root.visible = !scoped() && life === 'up';
     const bob = player.grounded ? Math.min(1, player.speed / 3) : 0;
     const phase = (player.distance / STRIDE) * Math.PI;
     vm.root.position.lerpVectors(HIP, ADS, scopeT);
@@ -495,6 +549,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
     time += dt;
 
     handleInput();
+    updateRevive(dt);
     remotes.update(time, dt);
     enemies.update(time, dt);
     acc += dt;
@@ -506,10 +561,10 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
       acc -= STEP;
     }
     if (rifle.update(dt) === 'reloaded') say('RELOADED');
-    if (!dead) health.regen(dt);
+    if (life === 'up') health.regen(dt);
     updateAim(dt);
     footsteps();
-    checkExtraction();
+    onThePad();
     sendState(dt);
     if (message && time > message.until) message = null;
 
@@ -527,7 +582,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
       time,
       locked: input.locked || TEST_MODE || !playing(),
       everLocked: input.everLocked,
-      scoped: scoped() && !dead,
+      scoped: scoped() && life === 'up',
       fovDeg: camera.fov,
       spreadRad: spreadNow(),
       viewHeading: ((Math.atan2(heading.x, -heading.z) * 180) / Math.PI + 360) % 360,
@@ -543,7 +598,10 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
       message,
       scores: input.isHeld('Tab') ? scores : null,
       myId: net.id,
-      dead: dead && { killer: dead.killer, zone: dead.zone, respawnIn: dead.until - time },
+      down: playing() && life !== 'up'
+        ? { by: down?.by ?? 'THE ENEMY', zone: down?.zone ?? '', bleedOut: (down?.until ?? time) - time, help: [...remotes.byId.values()].some((r) => r.life === 'up'), out: life === 'dead' }
+        : null,
+      revive: reviving && { name: nameOf(reviving.id), progress: reviving.progress },
       protectedFor: Math.max(0, protectedUntil - time),
       hurt: Math.max(0, 1 - (time - hurtAt) / 0.6),
     });
@@ -566,14 +624,14 @@ function runGame(menu: Menu, net: Net, welcome: Welcome) {
       return Math.hypot(flatDist, dy);
     },
     get phase() { return phase; },
-    get dead() { return dead; },
+    get life() { return life; },
+    setRevive(on: boolean) { reviveOverride = on; },
     get scores() { return scores; },
     get scoped() { return scoped(); },
     get recoil() { return recoil; },
     get lastHit() { return lastHit; },
     get shotsFired() { return shotsFired; },
     get message() { return message; },
-    get extracted() { return extracted; },
     seed,
   };
 }

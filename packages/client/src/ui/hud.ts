@@ -37,7 +37,8 @@ export interface HudState {
   message: { text: string; color: string } | null;
   scores: Score[] | null; // shown while Tab is held (online only)
   myId: number;
-  dead: { killer: string; zone: string; respawnIn: number } | null;
+  down: { by: string; zone: string; bleedOut: number; help: boolean; out: boolean } | null; // help: a teammate is still up
+  revive: { name: string; progress: number } | null; // next to a downed teammate
   protectedFor: number; // s of spawn protection left
   hurt: number; // 0..1 red flash after being hit
 }
@@ -78,7 +79,7 @@ export class Hud {
   draw(s: HudState) {
     const { ctx, w, h } = this;
     ctx.clearRect(0, 0, w, h);
-    if (s.dead) this.drawDead(s);
+    if (s.down) this.drawDown(s);
     else {
       if (s.scoped) this.drawScope(s);
       else this.drawCrosshair(s);
@@ -86,6 +87,7 @@ export class Hud {
       this.drawCompass(s);
       this.drawStatus(s);
       this.drawAmmo(s);
+      if (s.revive) this.drawRevive(s);
       if (s.hurt > 0) {
         const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.7);
         g.addColorStop(0, 'rgba(227,34,26,0)');
@@ -229,14 +231,36 @@ export class Hud {
     } else if (s.mag === 0) this.text(s.spare ? 'R  RELOAD' : 'NO AMMO', x, y + 26, 11, C.red, 'right', 700);
   }
 
-  private drawDead(s: HudState) {
+  /** Down: bleeding out, waiting for a teammate. Out: waiting for the mission to end. */
+  private drawDown(s: HudState) {
     const { ctx, w, h } = this;
-    const d = s.dead!;
-    ctx.fillStyle = 'rgba(245,247,249,0.55)';
+    const d = s.down!;
+    const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.2, w / 2, h / 2, Math.max(w, h) * 0.75);
+    g.addColorStop(0, 'rgba(245,247,249,0.35)');
+    g.addColorStop(1, d.out ? 'rgba(245,247,249,0.8)' : 'rgba(227,34,26,0.55)');
+    ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
-    this.text('DEAD', w / 2, h * 0.4, 64, C.red, 'center', 800);
-    this.text(`KILLED BY ${d.killer}  ·  ${d.zone}`, w / 2, h * 0.4 + 52, 16, C.ink, 'center');
-    this.text(`BACK IN ${Math.max(0, Math.ceil(d.respawnIn))}`, w / 2, h * 0.4 + 80, 13, C.inkSoft, 'center');
+    const y = h * 0.38;
+    if (d.out) {
+      this.text('OUT', w / 2, y, 64, C.ink, 'center', 800);
+      this.text('YOU BLED OUT  ·  WAITING FOR THE SQUAD', w / 2, y + 52, 15, C.ink, 'center');
+      return;
+    }
+    this.text('DOWN', w / 2, y, 64, C.red, 'center', 800);
+    this.text(`HIT BY ${d.by}  ·  ${d.zone}`, w / 2, y + 52, 15, C.ink, 'center');
+    this.text(`BLEEDING OUT  ${Math.max(0, Math.ceil(d.bleedOut))}`, w / 2, y + 82, 20, C.red, 'center', 800);
+    this.text(d.help ? 'A TEAMMATE CAN GET YOU UP: STAY PUT' : 'NOBODY LEFT STANDING TO GET YOU UP', w / 2, y + 112, 13, C.inkSoft, 'center');
+  }
+
+  /** Next to a downed teammate: hold E. */
+  private drawRevive(s: HudState) {
+    const { ctx, w, h } = this;
+    const r = s.revive!, y = h * 0.55, bw = 160;
+    this.text(r.progress > 0 ? `GETTING ${r.name} UP` : `HOLD E  ·  REVIVE ${r.name}`, w / 2, y, 14, s.scoped ? C.white : C.ink, 'center', 700);
+    ctx.fillStyle = 'rgba(27,31,35,0.18)';
+    ctx.fillRect(w / 2 - bw / 2, y + 14, bw, 4);
+    ctx.fillStyle = C.red;
+    ctx.fillRect(w / 2 - bw / 2, y + 14, bw * r.progress, 4);
   }
 
   /** Tab: kills, deaths, accuracy. */
@@ -245,15 +269,19 @@ export class Hud {
     const bw = 420, x = w / 2 - bw / 2, y = 90, rowH = 26;
     ctx.fillStyle = C.paper;
     ctx.fillRect(x, y, bw, 50 + scores.length * rowH);
-    this.text('PLAYER', x + 20, y + 22, 11, C.inkSoft, 'left', 700);
-    this.text('KILLS     DEATHS     HIT', x + bw - 20, y + 22, 11, C.inkSoft, 'right', 700);
+    const cols: Array<[string, (s: Score) => string, number]> = [
+      ['KILLS', (s) => String(s.kills), 250],
+      ['REVIVES', (s) => String(s.revives), 170],
+      ['DOWNS', (s) => String(s.downs), 95],
+      ['HIT', accuracy, 20],
+    ];
+    this.text('SOLDIER', x + 20, y + 22, 11, C.inkSoft, 'left', 700);
+    for (const [label, , right] of cols) this.text(label, x + bw - right, y + 22, 11, C.inkSoft, 'right', 700);
     scores.forEach((sc, i) => {
       const ry = y + 50 + i * rowH;
       const color = sc.id === myId ? C.red : C.ink;
       this.text(sc.name, x + 20, ry, 14, color);
-      this.text(String(sc.kills), x + bw - 200, ry, 14, color, 'right');
-      this.text(String(sc.deaths), x + bw - 110, ry, 14, color, 'right');
-      this.text(accuracy(sc), x + bw - 20, ry, 14, color, 'right');
+      for (const [, value, right] of cols) this.text(value(sc), x + bw - right, ry, 14, color, 'right');
     });
   }
 
@@ -264,7 +292,7 @@ export class Hud {
 
   private drawClickToPlay() {
     const { ctx, w, h } = this;
-    const bw = 460, bh = 300, x = w / 2 - bw / 2, y = h / 2 - bh / 2;
+    const bw = 460, bh = 320, x = w / 2 - bw / 2, y = h / 2 - bh / 2;
     ctx.fillStyle = C.paper;
     ctx.fillRect(x, y, bw, bh);
     ctx.fillStyle = C.red;
@@ -279,6 +307,7 @@ export class Hud {
       ['RIGHT MOUSE', 'SCOPE'],
       ['LEFT MOUSE', 'FIRE'],
       ['R', 'RELOAD'],
+      ['E (HOLD)', 'REVIVE A TEAMMATE'],
       ['TAB', 'SCORES'],
     ];
     help.forEach(([k, v], i) => {

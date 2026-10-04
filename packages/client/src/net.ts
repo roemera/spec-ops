@@ -66,6 +66,7 @@ export class Net {
     this.send({ t: 'ready', ready });
   }
 
+  /** START NOW: begin the mission without waiting for everyone to be ready. */
   startMatch() {
     this.send({ t: 'start' });
   }
@@ -76,6 +77,10 @@ export class Net {
 
   sendHit(shot: number, target: number, zone: HitZone, point: Vec3, dir: Vec3) {
     this.send({ t: 'hit', shot, target, zone, point, dir });
+  }
+
+  sendRevive(target: number) {
+    this.send({ t: 'revive', target });
   }
 
   sendState(s: SoldierState) {

@@ -25,9 +25,39 @@ const CSS = `
 #menu li { padding: 8px 10px; margin: 4px 0; background: rgba(27,31,35,0.05); }
 #menu li.ready { background: #1b1f23; color: #fff; }
 #menu .note { color: rgba(27,31,35,0.55); font-size: 12px; margin-top: 12px; }
+#menu h1.good { color: #1b1f23; }
+#menu h1.bad { color: #e3221a; }
+#menu table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+#menu th { text-align: right; font-size: 10px; color: rgba(27,31,35,0.55); padding: 4px 6px; }
+#menu td { text-align: right; padding: 6px; border-top: 1px solid rgba(27,31,35,0.08); }
+#menu th:first-child, #menu td:first-child { text-align: left; }
+#menu tr.me td { color: #e3221a; }
 `;
 
 export type JoinChoice = { server: string; name: string; password: string };
+
+/**
+ * A new mission means a new map, and the cleanest way to build one is a fresh page. Before
+ * reloading we remember how to get back in; the next page start joins straight away.
+ */
+export const rejoin = {
+  save(choice: JoinChoice) {
+    try {
+      sessionStorage.setItem('specops.rejoin', JSON.stringify(choice));
+    } catch {
+      /* no storage: the join screen will show instead */
+    }
+  },
+  take(): JoinChoice | null {
+    try {
+      const s = sessionStorage.getItem('specops.rejoin');
+      sessionStorage.removeItem('specops.rejoin');
+      return s ? (JSON.parse(s) as JoinChoice) : null;
+    } catch {
+      return null;
+    }
+  },
+};
 
 const store = {
   get: (k: string) => {
@@ -103,12 +133,10 @@ export class Menu {
     const status =
       phase === 'countdown'
         ? `STARTING IN ${countdown}...`
-        : players.length < 2
-          ? 'WAITING FOR MORE PLAYERS, OR PRESS START NOW'
-          : 'STARTS WHEN EVERYONE IS READY, OR WHEN ANYONE PRESSES START NOW';
+        : 'THE MISSION STARTS WHEN EVERYONE IS READY, OR WHEN ANYONE PRESSES START NOW. A NEW MAP EVERY MISSION.';
     this.root.innerHTML = `
       <div class="box">
-        <h1>LOBBY</h1>
+        <h1>SQUAD</h1>
         <ul>${players.map((p) => `<li class="${p.ready ? 'ready' : ''}">${p.id === myId ? '&gt; ' : ''}${escape(p.name)}${p.ready ? ' - READY' : ''}</li>`).join('')}</ul>
         <div class="note">${status}</div>
         ${phase === 'lobby' ? `<button class="ready">${me?.ready ? 'NOT READY' : 'READY'}</button><button class="alt start">START NOW</button>` : ''}
@@ -117,19 +145,19 @@ export class Menu {
     this.root.querySelector('button.start')?.addEventListener('click', onStart);
   }
 
-  /** End of match: who won, the table, and how long until the lobby. */
-  results(scores: Score[], winner: number, seconds: number, myId: number) {
+  /** End of the mission: extracted or not, how long it took, and what everyone did. */
+  results(success: boolean, time: number, scores: Score[], seconds: number, myId: number) {
     this.root.classList.add('see-through');
     this.root.style.display = 'flex';
-    const name = scores.find((s) => s.id === winner)?.name ?? '???';
     const rows = scores
-      .map((s) => `<li class="${s.id === winner ? 'ready' : ''}">${s.id === myId ? '&gt; ' : ''}${escape(s.name)} - ${s.kills} KILLS, ${s.deaths} DEATHS, ${accuracy(s)} HIT</li>`)
+      .map((s) => `<tr class="${s.id === myId ? 'me' : ''}"><td>${escape(s.name)}</td><td>${s.kills}</td><td>${s.revives}</td><td>${s.downs}</td><td>${accuracy(s)}</td></tr>`)
       .join('');
     this.root.innerHTML = `
       <div class="box">
-        <h1>${winner === myId ? 'YOU WIN' : `${escape(name)} WINS`}</h1>
-        <ul>${rows}</ul>
-        <div class="note">BACK TO THE LOBBY IN <span class="secs">${seconds}</span>...</div>
+        <h1 class="${success ? 'good' : 'bad'}">${success ? 'EXTRACTED' : 'MISSION FAILED'}</h1>
+        <div class="note">${success ? 'THE SQUAD MADE IT OUT' : 'NOBODY LEFT STANDING'} IN ${Math.floor(time / 60)}:${String(time % 60).padStart(2, '0')}</div>
+        <table><tr><th>SOLDIER</th><th>KILLS</th><th>REVIVES</th><th>DOWNS</th><th>HIT</th></tr>${rows}</table>
+        <div class="note">NEXT MISSION, NEW MAP: BACK TO THE SQUAD IN <span class="secs">${seconds}</span>...</div>
       </div>`;
     const el = this.root.querySelector('.secs')!;
     let left = seconds;

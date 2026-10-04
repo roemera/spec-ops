@@ -1,8 +1,8 @@
 import {
-  BULLET_SPEED, COUNTDOWN_SECONDS, ENEMY_DAMAGE, ENEMY_ID_BASE, EnemyAi, FOLIAGE_SEE, GRAVITY, Health, MAX_PLAYERS,
-  Obstacles, RESPAWN_DELAY, RESULTS_TIME, SPAWN_PROTECTION, encodeEnemies, generateMap,
-  type ClientMsg, type EnemyShot, type Phase, type PlayerInfo, type PlayerView, type Score, type ServerMsg,
-  type SoldierState,
+  BLEED_OUT, BULLET_SPEED, COUNTDOWN_SECONDS, ENEMY_DAMAGE, ENEMY_ID_BASE, EXTRACT_RADIUS, EnemyAi, FOLIAGE_SEE, GRAVITY,
+  Health, MAX_PLAYERS, Obstacles, RESULTS_TIME, REVIVE_HEALTH, REVIVE_RANGE, SPAWN_PROTECTION, encodeEnemies, generateMap,
+  type ClientMsg, type EnemyShot, type GameMap, type HitZone, type Life, type Phase, type PlayerInfo, type PlayerView,
+  type Score, type ServerMsg, type SoldierState,
 } from '@spec-ops/shared';
 
 export interface Player {
@@ -12,42 +12,46 @@ export interface Player {
   state: SoldierState | null; // last reported position, stance and velocity
   send(msg: ServerMsg): void;
   sendBinary(data: ArrayBuffer): void;
-  // Combat (the server owns health; clients report their own bullets' hits)
+  // Combat (the server owns health and life; clients report their own bullets' hits)
   health: Health;
-  alive: boolean;
+  life: Life;
+  downAt: number; // ms timestamp of going down (bleeds out BLEED_OUT later)
   protectedUntil: number; // ms timestamp: hits before this are ignored (spawn protection)
   kills: number;
-  deaths: number;
+  downs: number;
+  revives: number;
   shots: number;
   hits: number;
   hitShots: Set<number>; // shots already counted as hits (accuracy counts each shot once)
-  respawnTimer: ReturnType<typeof setTimeout> | null;
 }
 
 type Fire = Extract<ClientMsg, { t: 'fire' }>;
 type Hit = Extract<ClientMsg, { t: 'hit' }>;
 
 /**
- * Players, the lobby, the match phase and the enemy. Pure logic: no sockets, so it is easy to test.
- * The server owns the enemy: it runs the AI (tick) and tells everyone where they are.
+ * Players, the lobby and the co-op mission. Pure logic: no sockets, so it is easy to test.
+ * The server owns the enemy (it runs the AI in tick) and decides when the mission is over:
+ * success when everyone still standing is on the extraction pad, failure when nobody is.
+ * Each mission gets a new map unless the seed was fixed in the config.
  */
 export class Match {
   readonly players = new Map<number, Player>();
   phase: Phase = 'lobby';
   countdown = 0;
+  seed: number;
+  private fixedSeed: number; // 0: a new random map every mission
+  private map: GameMap;
   private ai: EnemyAi;
+  private startedAt = 0; // ms
   private nextShot = 1; // ids for enemy bullets
   private countdownTimer: ReturnType<typeof setInterval> | null = null;
-
-  readonly seed: number;
-  readonly killLimit: number;
   private resultsTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(seed: number, killLimit: number) {
-    this.seed = seed;
-    this.killLimit = killLimit;
-    const map = generateMap(seed);
-    this.ai = new EnemyAi(map, new Obstacles(map, FOLIAGE_SEE));
+  constructor(seed: number) {
+    this.fixedSeed = seed;
+    this.seed = seed || randomSeed();
+    this.map = generateMap(this.seed);
+    this.ai = new EnemyAi(this.map, new Obstacles(this.map, FOLIAGE_SEE));
   }
 
   get full() {
@@ -62,8 +66,8 @@ export class Match {
   join(name: string, send: Player['send'], sendBinary: Player['sendBinary']): Player {
     const p: Player = {
       id: this.freeId(), name: name.slice(0, 16) || 'SOLDIER', ready: false, state: null, send, sendBinary,
-      health: new Health(), alive: true, protectedUntil: Date.now() + SPAWN_PROTECTION * 1000,
-      kills: 0, deaths: 0, shots: 0, hits: 0, hitShots: new Set(), respawnTimer: null,
+      health: new Health(), life: 'up', downAt: 0, protectedUntil: Date.now() + SPAWN_PROTECTION * 1000,
+      kills: 0, downs: 0, revives: 0, shots: 0, hits: 0, hitShots: new Set(),
     };
     this.players.set(p.id, p);
     p.send({ t: 'welcome', id: p.id, seed: this.seed, players: this.list(), phase: this.phase, spawn: this.pickSpawn(p.id) });
@@ -72,15 +76,12 @@ export class Match {
   }
 
   leave(id: number) {
-    const p = this.players.get(id);
-    if (p?.respawnTimer) clearTimeout(p.respawnTimer);
     if (!this.players.delete(id)) return;
     this.broadcast({ t: 'left', id });
-    if (this.players.size === 0) this.toLobby();
-    else {
-      this.broadcastLobby();
-      this.maybeCountdown();
-    }
+    if (this.players.size === 0) return this.toLobby();
+    this.broadcastLobby();
+    this.maybeCountdown();
+    if (this.phase === 'live') this.checkMissionEnd();
   }
 
   setReady(id: number, ready: boolean) {
@@ -91,15 +92,15 @@ export class Match {
     this.maybeCountdown();
   }
 
-  /** Host typed `start`: begin even if not everyone is ready (works solo). */
+  /** Anyone pressed START NOW, or the host typed `start`: go even if not everyone is ready. */
   forceStart() {
     if (this.phase === 'lobby' && this.players.size > 0) this.startCountdown();
   }
 
-  /** All ready and at least two players: count down. */
+  /** Everyone ready: count down. */
   private maybeCountdown() {
     const all = [...this.players.values()];
-    if (this.phase === 'lobby' && all.length >= 2 && all.every((p) => p.ready)) this.startCountdown();
+    if (this.phase === 'lobby' && all.length > 0 && all.every((p) => p.ready)) this.startCountdown();
   }
 
   private startCountdown() {
@@ -117,38 +118,41 @@ export class Match {
     if (this.countdownTimer) clearInterval(this.countdownTimer);
     this.countdownTimer = null;
     this.phase = 'live';
+    this.startedAt = Date.now();
     this.ai.reset();
     for (const p of this.players.values()) {
       this.resetCombat(p);
       p.send({ t: 'spawn', spawn: this.pickSpawn(p.id) });
     }
+    console.log(`[mission] started: ${this.players.size} players, map ${this.seed}`);
     this.broadcastLobby();
   }
 
+  /** Back to the lobby, with the next mission's map ready (clients rejoin to load it). */
   private toLobby() {
     if (this.countdownTimer) clearInterval(this.countdownTimer);
     if (this.resultsTimer) clearTimeout(this.resultsTimer);
     this.countdownTimer = this.resultsTimer = null;
     this.phase = 'lobby';
-    for (const p of this.players.values()) {
-      p.ready = false;
-      if (p.respawnTimer) clearTimeout(p.respawnTimer);
-      p.respawnTimer = null;
+    for (const p of this.players.values()) p.ready = false;
+    if (!this.fixedSeed) {
+      this.seed = randomSeed();
+      this.map = generateMap(this.seed);
+      this.ai = new EnemyAi(this.map, new Obstacles(this.map, FOLIAGE_SEE));
     }
   }
 
   private resetCombat(p: Player) {
-    if (p.respawnTimer) clearTimeout(p.respawnTimer);
-    Object.assign(p, { alive: true, protectedUntil: Date.now() + SPAWN_PROTECTION * 1000, kills: 0, deaths: 0, shots: 0, hits: 0, respawnTimer: null });
+    Object.assign(p, { life: 'up', protectedUntil: Date.now() + SPAWN_PROTECTION * 1000, kills: 0, downs: 0, revives: 0, shots: 0, hits: 0 });
     p.health.reset();
     p.hitShots.clear();
   }
 
   // --- Combat ---
 
-  /** A player fired: count it and show the shot to everyone else. */
+  /** A player fired: count it, let the enemy hear it, show the shot to everyone else. */
   fire(from: Player, msg: Fire) {
-    if (this.phase !== 'live' || !from.alive) return;
+    if (this.phase !== 'live' || from.life !== 'up') return;
     from.shots++;
     this.ai.heardShot(from.id, { x: msg.pos[0], y: msg.pos[1], z: msg.pos[2] });
     for (const p of this.players.values()) {
@@ -156,30 +160,9 @@ export class Match {
     }
   }
 
-  /** The shooter's client says its bullet hit someone. Trusted, but the target must be alive and unprotected. */
+  /** The shooter's client says its bullet hit an enemy. (Players can't hurt each other.) */
   hit(from: Player, msg: Hit) {
-    if (msg.target >= ENEMY_ID_BASE) return this.hitEnemy(from, msg);
-    const target = this.players.get(msg.target);
-    if (this.phase !== 'live' || !target || target === from || !target.alive || Date.now() < target.protectedUntil) return;
-    const zone = msg.zone;
-    const res = target.health.applyHit(zone);
-    if (!from.hitShots.has(msg.shot)) {
-      from.hitShots.add(msg.shot);
-      from.hits++;
-    }
-    this.broadcast({ t: 'damage', target: target.id, attacker: from.id, zone, damage: res.damage, health: res.health, point: msg.point });
-    if (!res.killed) return;
-    target.alive = false;
-    target.deaths++;
-    from.kills++;
-    console.log(`[kill] ${from.name} killed ${target.name} (${zone}) - ${from.kills}/${this.killLimit}`);
-    this.broadcast({ t: 'kill', victim: target.id, killer: from.id, zone, scores: this.scores() });
-    if (from.kills >= this.killLimit) return this.endMatch(from.id);
-    target.respawnTimer = setTimeout(() => this.respawn(target), RESPAWN_DELAY * 1000);
-  }
-
-  private hitEnemy(from: Player, msg: Hit) {
-    if (this.phase !== 'live' || !from.alive) return;
+    if (msg.target < ENEMY_ID_BASE || this.phase !== 'live' || from.life !== 'up') return;
     const at = from.state?.pos ?? msg.point;
     const res = this.ai.damage(msg.target, msg.zone, from.id, { x: at[0], y: at[1], z: at[2] });
     if (!res) return;
@@ -192,19 +175,43 @@ export class Match {
     this.broadcast({ t: 'enemyDown', id: msg.target, killer: from.id, zone: msg.zone, dir: msg.dir, scores: this.scores() });
   }
 
-  /** One AI step: the enemy looks, moves and shoots; players heal; everyone gets the enemy's positions. */
+  /** A player held E next to a downed teammate long enough. Trusted, but they must be close. */
+  revive(from: Player, targetId: number) {
+    const t = this.players.get(targetId);
+    if (this.phase !== 'live' || from.life !== 'up' || !t || t.life !== 'down' || !from.state || !t.state) return;
+    const [ax, , az] = from.state.pos, [bx, , bz] = t.state.pos;
+    if (Math.hypot(ax - bx, az - bz) > REVIVE_RANGE + 1.5) return; // a little slack for lag
+    t.life = 'up';
+    t.health.reset();
+    t.health.health = REVIVE_HEALTH;
+    t.health.sinceHit = 0;
+    from.revives++;
+    console.log(`[revive] ${from.name} got ${t.name} up`);
+    this.broadcast({ t: 'revived', id: t.id, by: from.id, health: REVIVE_HEALTH, scores: this.scores() });
+    this.broadcastLobby();
+  }
+
+  /** One AI step: the enemy looks, moves and shoots; players heal or bleed out; the mission may end. */
   tick(dt: number) {
     if (this.phase !== 'live') return;
+    const now = Date.now();
     const views: PlayerView[] = [];
     for (const p of this.players.values()) {
-      p.health.regen(dt);
+      if (p.life === 'up') p.health.regen(dt);
+      if (p.life === 'down' && now - p.downAt > BLEED_OUT * 1000) {
+        p.life = 'dead';
+        console.log(`[mission] ${p.name} bled out`);
+        this.broadcast({ t: 'bledOut', id: p.id, scores: this.scores() });
+        this.broadcastLobby();
+      }
       if (!p.state) continue;
       const [x, y, z] = p.state.pos, [vx, vy, vz] = p.state.vel;
-      views.push({ id: p.id, pos: { x, y, z }, vel: { x: vx, y: vy, z: vz }, stance: p.state.stance, alive: p.alive });
+      views.push({ id: p.id, pos: { x, y, z }, vel: { x: vx, y: vy, z: vz }, stance: p.state.stance, alive: p.life === 'up' });
     }
     for (const shot of this.ai.step(dt, views)) this.enemyFired(shot);
     const packet = encodeEnemies(this.ai.views());
     for (const p of this.players.values()) p.sendBinary(packet);
+    this.checkMissionEnd();
   }
 
   /** An enemy fired: everyone sees the bullet; the hit (decided by the AI) lands now. */
@@ -215,36 +222,37 @@ export class Match {
     const vel: [number, number, number] = [dx / t, dy / t + 0.5 * GRAVITY * t, dz / t];
     this.broadcast({ t: 'fire', from: shot.enemy, shot: this.nextShot++, pos: [shot.from.x, shot.from.y, shot.from.z], vel });
     const target = shot.hit && this.players.get(shot.hit.player);
-    if (!shot.hit || !target || !target.alive || Date.now() < target.protectedUntil) return;
+    if (!shot.hit || !target || target.life !== 'up' || Date.now() < target.protectedUntil) return;
     const zone = shot.hit.zone;
     const res = target.health.applyHit(zone, ENEMY_DAMAGE);
     this.broadcast({ t: 'damage', target: target.id, attacker: shot.enemy, zone, damage: res.damage, health: res.health, point: [shot.to.x, shot.to.y, shot.to.z] });
-    if (!res.killed) return;
-    target.alive = false;
-    target.deaths++;
-    console.log(`[kill] the enemy killed ${target.name} (${zone})`);
-    this.broadcast({ t: 'kill', victim: target.id, killer: shot.enemy, zone, scores: this.scores() });
-    target.respawnTimer = setTimeout(() => this.respawn(target), RESPAWN_DELAY * 1000);
+    if (res.killed) this.goDown(target, shot.enemy, zone);
   }
 
-  private respawn(p: Player) {
-    p.respawnTimer = null;
-    if (this.phase !== 'live' || !this.players.has(p.id)) return;
-    p.health.reset();
-    p.alive = true;
-    p.protectedUntil = Date.now() + SPAWN_PROTECTION * 1000;
-    p.send({ t: 'spawn', spawn: this.pickSpawn(p.id) });
-    this.broadcast({ t: 'respawn', id: p.id });
+  private goDown(p: Player, by: number, zone: HitZone) {
+    p.life = 'down';
+    p.downAt = Date.now();
+    p.downs++;
+    console.log(`[mission] ${p.name} is down (${zone})`);
+    this.broadcast({ t: 'down', id: p.id, by, zone, bleedOut: BLEED_OUT, scores: this.scores() });
+    this.broadcastLobby();
   }
 
-  private endMatch(winner: number) {
-    console.log(`[results] ${this.players.get(winner)?.name} wins`);
+  /** Success: nobody down and everyone standing is on the pad. Failure: nobody standing. */
+  private checkMissionEnd() {
+    const all = [...this.players.values()];
+    const up = all.filter((p) => p.life === 'up');
+    if (up.length === 0) return this.endMission(false);
+    if (all.some((p) => p.life === 'down')) return;
+    const { x, z } = this.map.extract;
+    if (up.every((p) => p.state && Math.hypot(p.state.pos[0] - x, p.state.pos[2] - z) <= EXTRACT_RADIUS)) this.endMission(true);
+  }
+
+  private endMission(success: boolean) {
+    const time = Math.round((Date.now() - this.startedAt) / 1000);
+    console.log(`[mission] ${success ? 'EXTRACTED' : 'FAILED'} after ${time} s`);
     this.phase = 'results';
-    for (const p of this.players.values()) {
-      if (p.respawnTimer) clearTimeout(p.respawnTimer);
-      p.respawnTimer = null;
-    }
-    this.broadcast({ t: 'results', scores: this.scores(), winner, seconds: RESULTS_TIME });
+    this.broadcast({ t: 'results', success, time, scores: this.scores(), seconds: RESULTS_TIME });
     this.broadcastLobby();
     this.resultsTimer = setTimeout(() => {
       this.toLobby();
@@ -254,17 +262,17 @@ export class Match {
 
   scores(): Score[] {
     return [...this.players.values()]
-      .map(({ id, name, kills, deaths, shots, hits }) => ({ id, name, kills, deaths, shots, hits }))
-      .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+      .map(({ id, name, kills, downs, revives, shots, hits }) => ({ id, name, kills, downs, revives, shots, hits }))
+      .sort((a, b) => b.kills - a.kills || b.revives - a.revives || a.downs - b.downs);
   }
 
-  /** Everyone starts (and comes back) at the insertion point: map spawns 0-3, side by side. */
+  /** Everyone starts at the insertion point: map spawns 0-3, side by side. */
   pickSpawn(forId: number): number {
     return (forId - 1) % 4;
   }
 
   list(): PlayerInfo[] {
-    return [...this.players.values()].map(({ id, name, ready }) => ({ id, name, ready }));
+    return [...this.players.values()].map(({ id, name, ready, life }) => ({ id, name, ready, life }));
   }
 
   broadcast(msg: ServerMsg) {
@@ -272,6 +280,10 @@ export class Match {
   }
 
   private broadcastLobby() {
-    this.broadcast({ t: 'lobby', players: this.list(), phase: this.phase, countdown: this.countdown });
+    this.broadcast({ t: 'lobby', players: this.list(), phase: this.phase, countdown: this.countdown, seed: this.seed });
   }
+}
+
+function randomSeed() {
+  return 1 + Math.floor(Math.random() * 999999);
 }

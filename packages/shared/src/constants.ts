@@ -54,9 +54,16 @@ export const PHYSICS_HZ = 60;
 export const PLAYER_HEALTH = 100;
 export const REGEN_DELAY = 5; // s after the last hit before health comes back
 export const REGEN_RATE = 25; // health per second
-export const RESPAWN_DELAY = 5; // s
 export const SPAWN_PROTECTION = 3; // s
-export const RESULTS_TIME = 15; // s the results screen shows before the lobby
+export const RESULTS_TIME = 12; // s the results screen shows before the lobby (and a new map)
+
+// Co-op: at 0 health you go down. A teammate holding E next to you for REVIVE_TIME gets you up;
+// otherwise you bleed out and are out until the next mission. No respawns.
+export const BLEED_OUT = 30; // s
+export const REVIVE_TIME = 3; // s holding E
+export const REVIVE_RANGE = 2.2; // m
+export const REVIVE_HEALTH = 50;
+export const EXTRACT_RADIUS = 7; // m from the pad's centre: the squad is extracted when all standing are inside
 
 // Enemy AI. Detection is a meter per enemy per player: it fills while they can see you, and at 1
 // they are alert. Seeing is harder far away, low down, standing still, at the edge of their view,
