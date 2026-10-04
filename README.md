@@ -95,7 +95,7 @@ they have spotted you. Every enemy rifle has a **laser sight** in the same colou
 each one is looking: faint while they patrol, sweeping slowly back and forth while they are suspicious
 or searching, bold once alert. While
 they aim at you the laser wavers and then holds steady: a steady laser means the next shot will
-probably hit. A laser pointed straight at your eyes shows as a red glare at its rifle. You hear them: a "huh?" when one gets suspicious, a
+probably hit. A laser pointed straight at your eyes shows as a glare at its rifle, in the same colour. You hear them: a "huh?" when one gets suspicious, a
 shout when one spots you, and their boots in the snow. Health comes back 5 s after the last hit.
 
 URL options: `?join=host:port&name=X&password=Y` joins directly, `?test` hides the click-to-play
