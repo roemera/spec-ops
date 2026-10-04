@@ -116,7 +116,7 @@ panel (for headless checks).
 | C / Z | Crouch / prone (press again to stand) |
 | Right mouse (hold) | Scope (12x). Sway is smallest prone, largest standing or moving |
 | Left mouse | Fire. Work the bolt after every shot (1.1 s) |
-| R | Reload (5-round magazine, 20 spare) |
+| R | Reload (5-round magazine, unlimited magazines). Press R again while the needle is in the red to slap it home at once; near it, a quick finish; anywhere else it jams (+1.2 s) |
 | E (hold) | Revive a downed teammate next to you |
 | Tab | Scores |
 

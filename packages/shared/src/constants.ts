@@ -27,9 +27,13 @@ export const GRAVITY = 9.81;
 export const BULLET_LIFETIME = 2; // s before a bullet that hit nothing is removed
 export const WIND_DRIFT = 1; // m/s^2 sideways push on a bullet per m/s of wind (5 m/s crosswind: ~0.5 m at 300 m)
 export const MAG_SIZE = 5;
-export const SPARE_MAGS = 4; // magazines carried besides the loaded one
 export const BOLT_TIME = 1.1; // s between shots (working the bolt)
-export const RELOAD_TIME = 2.6; // s to swap the magazine
+export const RELOAD_TIME = 2.6; // s to swap the magazine (ammo is unlimited: it's the reload that costs)
+// Active reload: press R again while reloading. In the perfect zone the magazine is in at once; in the
+// good zone (around it) a moment later; anywhere else it jams and takes longer. One try per reload.
+export const ACTIVE_RELOAD = { good: [0.36, 0.58], perfect: [0.44, 0.5] } as const; // fractions of RELOAD_TIME
+export const RELOAD_GOOD_FINISH = 0.3; // s left after a good press
+export const RELOAD_JAM = 1.2; // s added by a missed press
 export const HIP_SPREAD = (2.5 * Math.PI) / 180; // rad, unscoped (halved crouched, quartered prone)
 export const SCOPE_FOV = 6; // deg vertical (about 12x)
 export const SCOPE_IN_TIME = 0.18; // s to raise the scope

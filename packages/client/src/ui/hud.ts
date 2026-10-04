@@ -1,4 +1,4 @@
-import { BULLET_SPEED, GRAVITY, PLAYER_HEALTH, type Score, type Stance } from '@spec-ops/shared';
+import { ACTIVE_RELOAD, BULLET_SPEED, GRAVITY, PLAYER_HEALTH, type Score, type Stance } from '@spec-ops/shared';
 import { accuracy } from './menu';
 
 // Full-resolution HUD on a 2D canvas over the 3D view. Minimal and flat: dark ink on the bright
@@ -28,7 +28,7 @@ export interface HudState {
   health: number;
   stance: Stance;
   mag: number;
-  spare: number;
+  active: 'perfect' | 'good' | 'jam' | null; // this reload's second R press, once made
   busy: 'bolt' | 'reload' | null;
   busyProgress: number; // 0..1
   breath: number; // 0..1 of held breath left
@@ -219,23 +219,48 @@ export class Hud {
     this.text(STANCE_LABEL[s.stance], x, y - 14, 12, ink, 'left', 700);
   }
 
-  /** Bottom right: rounds in the magazine, rounds spare, and what the rifle is doing. */
+  /** Bottom right: rounds in the magazine (ammo is unlimited), and what the rifle is doing. */
   private drawAmmo(s: HudState) {
     const { ctx, w, h } = this;
     const ink = s.scoped ? C.white : C.ink;
     const x = w - 28, y = h - 62;
-    this.text(`/ ${s.spare}`, x, y, 14, s.scoped ? 'rgba(255,255,255,0.6)' : C.inkSoft, 'right');
-    ctx.font = `600 14px ${FONT}`;
-    const spareW = ctx.measureText(`/ ${s.spare}`).width + 8;
-    this.text(String(s.mag), x - spareW, y - 2, 30, s.mag === 0 ? C.red : ink, 'right', 700);
-    if (s.busy) {
+    this.text(String(s.mag), x, y - 2, 30, s.mag === 0 ? C.red : ink, 'right', 700);
+    if (s.busy === 'reload') this.drawReload(s);
+    else if (s.busy) {
       const bw = 90;
       ctx.fillStyle = s.scoped ? 'rgba(255,255,255,0.25)' : 'rgba(27,31,35,0.18)';
       ctx.fillRect(x - bw, y + 22, bw, 3);
       ctx.fillStyle = ink;
       ctx.fillRect(x - bw, y + 22, bw * s.busyProgress, 3);
-      this.text(s.busy === 'reload' ? 'RELOADING' : 'BOLT', x - bw, y + 34, 10, ink, 'left', 700);
-    } else if (s.mag === 0) this.text(s.spare ? 'R  RELOAD' : 'NO AMMO', x, y + 26, 11, C.red, 'right', 700);
+      this.text('BOLT', x - bw, y + 34, 10, ink, 'left', 700);
+    } else if (s.mag === 0) this.text('R  RELOAD', x, y + 26, 11, C.red, 'right', 700);
+  }
+
+  /**
+   * The active reload, under the crosshair (the rifle swings across the bottom right while
+   * reloading): a needle crossing the good zone, with the perfect zone in red. Press R on it.
+   */
+  private drawReload(s: HudState) {
+    const { ctx, w, h } = this;
+    const bw = 180, bh = 6, x = w / 2 - bw / 2, y = h / 2 + 70;
+    ctx.fillStyle = 'rgba(243,245,247,0.8)';
+    ctx.fillRect(x - 14, y - 10, bw + 28, bh + 34);
+    ctx.fillStyle = 'rgba(27,31,35,0.18)';
+    ctx.fillRect(x, y, bw, bh);
+    const k = Math.min(1, s.busyProgress);
+    if (!s.active) {
+      const zone = (z: readonly [number, number], color: string) => {
+        ctx.fillStyle = color;
+        ctx.fillRect(x + bw * z[0], y - 2, bw * (z[1] - z[0]), bh + 4);
+      };
+      zone(ACTIVE_RELOAD.good, 'rgba(27,31,35,0.4)');
+      zone(ACTIVE_RELOAD.perfect, C.red);
+    }
+    ctx.fillStyle = s.active === 'jam' ? C.red : C.ink;
+    ctx.fillRect(x, y + 1, bw * k, bh - 2);
+    if (!s.active) ctx.fillRect(x + bw * k - 1, y - 5, 2, bh + 10); // the needle
+    const label = s.active === 'jam' ? 'JAMMED' : s.active === 'perfect' ? 'PERFECT' : s.active === 'good' ? 'FAST' : 'RELOAD  ·  R ON THE RED';
+    this.text(label, w / 2, y + 20, 10, s.active === 'jam' ? C.red : C.ink, 'center', 700);
   }
 
   /** Down: bleeding out, waiting for a teammate. Out: waiting for the mission to end. */

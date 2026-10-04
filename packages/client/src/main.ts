@@ -220,14 +220,17 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     return HIP_SPREAD * STANCE_STEADY[player.stance] * moving * (1 - scopeT);
   }
 
+  /** The second R press: slap the magazine home in the sweet spot, or fumble it. */
+  function activeReload() {
+    const r = rifle.activeReload();
+    if (r === 'perfect') audio.play('perfect');
+    else if (r === 'jam') audio.play('jam');
+  }
+
   function fire() {
     if (!controlling()) return;
     if (rifle.mag === 0) {
       if (rifle.reload()) audio.play('reload');
-      else if (!rifle.reloading) {
-        audio.play('dry');
-        say('NO AMMO', HUD_COLORS.red);
-      }
       return;
     }
     if (!rifle.fire()) return; // working the bolt or reloading
@@ -454,7 +457,10 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
         if (player.stance === 'stand') move.jump = true;
         else player.setStance('stand');
       }
-      if (code === 'KeyR' && rifle.reload()) audio.play('reload');
+      if (code === 'KeyR') {
+        if (rifle.reloading) activeReload();
+        else if (rifle.reload()) audio.play('reload');
+      }
     }
     const shift = input.isHeld('ShiftLeft') || input.isHeld('ShiftRight');
     move.forward = (input.isHeld('KeyW') ? 1 : 0) - (input.isHeld('KeyS') ? 1 : 0);
@@ -583,7 +589,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       bullets.step(STEP);
       acc -= STEP;
     }
-    if (rifle.update(dt) === 'reloaded') say('RELOADED');
+    if (rifle.update(dt) === 'reloaded') audio.play('magIn', { volume: rifle.active === 'perfect' ? 1.2 : 0.8 });
     if (life === 'up') health.regen(dt);
     updateAim(dt);
     footsteps();
@@ -620,7 +626,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       health: health.health,
       stance: player.stance,
       mag: rifle.mag,
-      spare: rifle.spare,
+      active: rifle.active,
       busy: rifle.reloading ? 'reload' : rifle.boltLeft > 0 ? 'bolt' : null,
       busyProgress: rifle.busyProgress,
       breath,

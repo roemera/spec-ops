@@ -7,7 +7,7 @@ import { makeRng } from '@spec-ops/shared';
 const RATE = 22050;
 const SPEED_OF_SOUND = 343; // m/s
 
-export type SoundName = 'shot' | 'bolt' | 'reload' | 'dry' | 'step' | 'impact' | 'hit' | 'shatter' | 'wind' | 'shout' | 'huh' | 'hurt' | 'headshot';
+export type SoundName = 'shot' | 'bolt' | 'reload' | 'dry' | 'step' | 'impact' | 'hit' | 'shatter' | 'wind' | 'shout' | 'huh' | 'hurt' | 'headshot' | 'magIn' | 'perfect' | 'jam';
 
 type Gen = (t: number, rnd: () => number) => number;
 
@@ -65,10 +65,31 @@ const GENERATORS: Record<SoundName, { seconds: number; gen: () => Gen }> = {
     seconds: 0.75,
     gen: () => (t, r) => click(t, 0.02, 1800, r) + 0.8 * click(t, 0.2, 1200, r) + click(t, 0.48, 1500, r) + 0.7 * click(t, 0.62, 2200, r),
   },
-  // Magazine out, in, slap.
+  // Magazine out and a fumble in the pouch (the seat is magIn, when it actually goes in).
   reload: {
-    seconds: 1.2,
-    gen: () => (t, r) => 0.8 * click(t, 0.05, 900, r) + click(t, 0.75, 700, r) + 0.6 * click(t, 0.95, 1600, r),
+    seconds: 0.7,
+    gen: () => (t, r) => 0.8 * click(t, 0.05, 900, r) + 0.3 * click(t, 0.4, 600, r) + 0.25 * click(t, 0.55, 750, r),
+  },
+  // The magazine seated (end of any reload).
+  magIn: {
+    seconds: 0.15,
+    gen: () => (t, r) => click(t, 0, 1400, r) + 0.6 * click(t, 0.05, 2400, r),
+  },
+  // Perfect active reload: a hard slap and a bright rising ping.
+  perfect: {
+    seconds: 0.45,
+    gen: () => (t, r) => 1.2 * click(t, 0, 2000, r) + 0.5 * Math.sin(2 * Math.PI * (1500 + 1400 * t) * t) * Math.exp(-t * 9),
+  },
+  // Fumbled active reload: a dull metal clunk and a rattle.
+  jam: {
+    seconds: 0.5,
+    gen: () => {
+      let lp = 0;
+      return (t, r) => {
+        lp += 0.2 * (r() * 2 - 1 - lp);
+        return Math.sin(2 * Math.PI * 190 * t) * 1.2 * Math.exp(-t * 18) + 1.5 * lp * Math.exp(-t * 14) + 0.5 * click(t, 0.16, 700, r) + 0.4 * click(t, 0.27, 900, r);
+      };
+    },
   },
   dry: {
     seconds: 0.1,
