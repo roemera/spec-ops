@@ -91,7 +91,7 @@ and every rifle shot within 260 m, and anyone who sees a friend go down comes lo
 gets better the longer they keep you in sight, and two body hits put you down.
 
 Every enemy rifle has a **laser sight**, so you can see where each one is looking: faint while they
-patrol, sweeping back and forth while they are suspicious or searching, deep red once alert. While
+patrol, sweeping slowly back and forth while they are suspicious or searching, bold once alert. While
 they aim at you the laser wavers and then holds steady: a steady laser means the next shot will
 probably hit. A laser pointed straight at your eyes shows as a red glare at its rifle. You hear them: a "huh?" when one gets suspicious, a
 shout when one spots you, and their boots in the snow. Health comes back 5 s after the last hit.

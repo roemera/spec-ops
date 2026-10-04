@@ -91,7 +91,7 @@ export class Enemies {
   *lasers(): Iterable<LaserSource> {
     for (const e of this.byId.values()) {
       if (e.dead || e.snaps.length === 0) continue;
-      yield { muzzle: e.model.muzzle, aim: e.model.aim, state: e.state, locked: e.locked };
+      yield { id: e.id, muzzle: e.model.muzzle, aim: e.model.aim, state: e.state, locked: e.locked };
     }
   }
 
@@ -137,7 +137,7 @@ export class Enemies {
       root.rotation.y = yaw;
       // Footsteps when a foot comes down: their boots in the snow, so you can hear a patrol coming.
       if (e.model.pose(e.stance, pitch, e.walked, e.speed, dt)) {
-        const volume = e.speed > 2.5 ? 1.1 : 0.7;
+        const volume = e.speed > 2.5 ? 0.3 : 0.16; // soft: a patrol close by, not a parade
         this.audio.play('step', { pos: pos.clone().setY(pos.y + STANCES[e.stance].height * 0.1), volume, rate: 0.85 + Math.random() * 0.2 });
       }
       root.updateMatrixWorld(true); // hit tests this frame use the new pose

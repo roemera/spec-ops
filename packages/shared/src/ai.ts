@@ -263,8 +263,8 @@ export class EnemyAi {
     if (!lk) return this.setState(e, 'patrol');
     // Stop and look, sweeping the gun (and its laser) back and forth over where it came from;
     // after a moment, walk over carefully.
-    const scan = e.stateT * 1.6 + e.phase;
-    if (e.stateT < 2.5 || e.fixed) this.face(e, lk, dt, Math.sin(scan) * 0.35, Math.sin(scan * 0.7) * 0.06);
+    const scan = e.stateT * 0.8 + e.phase; // a slow, deliberate sweep
+    if (e.stateT < 2.5 || e.fixed) this.face(e, lk, dt, Math.sin(scan) * 0.3, Math.sin(scan * 0.7) * 0.04);
     else if (this.walk(e, lk.x, lk.z, ENEMY_WALK, dt) < 4) this.setState(e, 'search');
     if (e.stateT > 3 && maxMeter(e) < 0.1) this.setState(e, 'patrol');
   }
@@ -277,7 +277,7 @@ export class EnemyAi {
     // There (or stuck up a tower): look around, then give up.
     e.arrivedT += dt;
     this.turn(e, Math.atan2(-(lk.x - e.pos.x), -(lk.z - e.pos.z)) + Math.sin(e.arrivedT * 0.8) * 1.4, dt);
-    e.pitch = Math.sin(e.arrivedT * 1.3 + e.phase) * 0.08;
+    e.pitch = Math.sin(e.arrivedT * 0.7 + e.phase) * 0.05;
     if (e.arrivedT > SEARCH_LOOK) {
       e.lastKnown = null;
       for (const k of e.meter.keys()) e.meter.set(k, Math.min(e.meter.get(k)!, SUSPICIOUS_AT * 0.5));
@@ -300,8 +300,8 @@ export class EnemyAi {
       e.lostT = 0;
       e.stance = e.fightStance;
       // The aim wanders onto you and settles: a steady laser means the next shot will likely hit.
-      const aim = Math.min(1, e.aimT / ENEMY_AIM_TIME), wob = 1 - aim, t = this.time * 2.6 + e.phase;
-      this.face(e, chest, dt, wob * 0.09 * Math.sin(t), wob * 0.05 * Math.sin(t * 1.3));
+      const aim = Math.min(1, e.aimT / ENEMY_AIM_TIME), wob = 1 - aim, t = this.time * 1.4 + e.phase;
+      this.face(e, chest, dt, wob * 0.06 * Math.sin(t), wob * 0.03 * Math.sin(t * 1.3));
       e.locked = aim > 0.55;
       e.aimT += dt;
       e.fireCd -= dt;

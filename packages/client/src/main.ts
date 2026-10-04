@@ -589,7 +589,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     const w = wind();
     world.update(dt, w);
     snow.update(dt, camera, w, viewCanvas.height);
-    lasers.update(enemies.lasers(), camera, viewCanvas.width, viewCanvas.height);
+    lasers.update(enemies.lasers(), camera, dt, viewCanvas.width, viewCanvas.height);
     const windSpeed = Math.hypot(w.x, w.z);
     windSound.setPosition(camera.position.clone().add(new THREE.Vector3(-w.x, 0.3 * windSpeed, -w.z).normalize().multiplyScalar(20)));
     windSound.setVolume(0.15 + Math.min(0.9, windSpeed * 0.1));
