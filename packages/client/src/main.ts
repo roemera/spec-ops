@@ -15,6 +15,7 @@ import { PlayerSim, type MoveInput } from './sim/player';
 import { Rifle } from './sim/rifle';
 import { Bullets, type Bullet, type SoldierHit } from './sim/bullets';
 import { buildRifle } from './models/rifle';
+import { strideFor } from './models/soldier';
 import { Input } from './input';
 import { Hud, HUD_COLORS } from './ui/hud';
 import { Fx } from './fx';
@@ -35,7 +36,6 @@ const ADS_FOV = 55; // deg while raising the scope, before it snaps to the scope
 const MOUSE_SENS = 0.0022; // rad per pixel at BASE_FOV; scales with fov so the scope isn't twitchy
 const MESSAGE_TIME = 2.5; // s
 const BRIEFING_TIME = 7; // s the extraction bearing shows after spawning
-const STRIDE = 0.75; // m per footstep
 const STANCE_STEADY: Record<Stance, number> = { stand: 1, crouch: 0.6, prone: 0.25 }; // sway and spread
 const ZERO_RANGE = 100; // m: the scope is zeroed here (bullets cross the crosshair at this range)
 const drop = (m: number) => (GRAVITY * m) / (2 * BULLET_SPEED * BULLET_SPEED); // rad, small angle
@@ -498,7 +498,9 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
 
   // --- Frame ---
   const feet = new THREE.Vector3(), euler = new THREE.Euler(0, 0, 0, 'YXZ');
-  let acc = 0, last = performance.now() / 1000, nextStep = STRIDE;
+  let acc = 0, last = performance.now() / 1000;
+  // Your own gait: half a cycle per footstep, at the same cadence as everyone else's legs.
+  let walkPhase = 0, walkedTo = 0;
 
   function placeCamera(alpha: number) {
     player.feet(alpha, feet);
@@ -523,7 +525,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   function placeViewmodel(dt: number) {
     vm.root.visible = !scoped() && life === 'up';
     const bob = player.grounded ? Math.min(1, player.speed / 3) : 0;
-    const phase = (player.distance / STRIDE) * Math.PI;
+    const phase = walkPhase;
     vm.root.position.lerpVectors(HIP, ADS, scopeT);
     vm.root.position.x += Math.sin(phase) * 0.012 * bob * (1 - scopeT);
     vm.root.position.y += Math.abs(Math.cos(phase)) * 0.01 * bob * (1 - scopeT);
@@ -550,8 +552,10 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   }
 
   function footsteps() {
-    if (player.distance < nextStep) return;
-    nextStep = player.distance + STRIDE;
+    const before = Math.floor(walkPhase / Math.PI);
+    walkPhase += ((player.distance - walkedTo) / strideFor(player.speed)) * Math.PI;
+    walkedTo = player.distance;
+    if (Math.floor(walkPhase / Math.PI) === before) return;
     const volume = player.stance === 'stand' ? (player.speed > 4 ? 0.7 : 0.45) : player.stance === 'crouch' ? 0.2 : 0.08;
     audio.play('step', { volume, rate: 0.9 + Math.random() * 0.2 });
   }

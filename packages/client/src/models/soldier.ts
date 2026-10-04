@@ -6,7 +6,8 @@ import { buildRifle } from './rifle';
 // A low poly soldier, one colour, faceless. Origin at the feet, facing -z.
 // Joints are groups; pose() sets them from a stance blend, the aim pitch and how far and fast it walks.
 //
-// The gait: strides lengthen with speed (so legs don't spin at a run), each knee folds as its leg
+// The gait: running is only a few more steps a second than walking, but much longer strides
+// (see strideFor). Each knee folds as its leg
 // swings through, the hips dip at every footfall, and running leans the body in and lowers the gun.
 
 const THIGH = 0.45;
@@ -26,6 +27,18 @@ const POSES: Record<Stance, Pose> = {
   crouch: { hipY: 0.62, hipsX: 0, torsoX: -0.3, thigh: 1.25, knee: -1.25 },
   prone: { hipY: 0.17, hipsX: -Math.PI / 2, torsoX: 0, thigh: 0, knee: 0 },
 };
+
+/**
+ * Footsteps per second at a given speed (m/s): about 1.7 at a patrol walk, 2.3 at a run, 2.7 at a
+ * flat-out sprint. Everyone's legs, footstep sounds and rifle bob use it.
+ */
+export function cadence(speed: number) {
+  return Math.min(2.8, 1.4 + 0.22 * speed);
+}
+/** Metres per footstep at a given speed: what the cadence leaves to stride length. */
+export function strideFor(speed: number) {
+  return Math.max(0.5, speed / cadence(speed));
+}
 
 export interface SoldierModel {
   root: THREE.Group;
@@ -120,8 +133,8 @@ export function buildSoldier(color: number): SoldierModel {
       const sp = smoothSpeed;
       const gait = Math.min(1, sp / 1.1); // 0 standing still .. 1 walking
       const run = Math.max(0, Math.min(1, (sp - 2.2) / 2)); // 0 walking .. 1 running
-      // Phase: half a cycle per stride; strides get longer the faster you go.
-      const stride = 0.55 + 0.28 * sp;
+      // Phase: half a cycle per footstep.
+      const stride = strideFor(sp);
       const step = Number.isNaN(lastWalked) ? 0 : Math.max(0, Math.min(3, walked - lastWalked));
       lastWalked = walked;
       const before = Math.floor(phase / Math.PI);
@@ -139,7 +152,8 @@ export function buildSoldier(color: number): SoldierModel {
       const upright = -(cur.hipsX + cur.torsoX); // undo the body tilt for the head and the gun
       aim.rotation.x = upright + pitch - 0.35 * run;
       neck.rotation.x = upright + pitch * 0.6 + 0.15 * run;
-      const swing = 0.32 + 0.3 * run, fold = 0.55 + 0.55 * run;
+      // Swing the thighs far enough to cover the stride (a leg is about 0.93 m), plus a run's extra fold.
+      const swing = Math.max(0.25, Math.min(0.85, Math.asin(Math.min(0.95, (stride * 0.5) / 0.93)) * 0.8)), fold = 0.55 + 0.55 * run;
       legs.forEach(({ thigh, knee }, i) => {
         const p = phase + i * Math.PI;
         thigh.rotation.x = cur.thigh + Math.sin(p) * swing * amp;
