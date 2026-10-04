@@ -98,6 +98,7 @@ export const VIEW_HALF_ANGLE = (70 * Math.PI) / 180; // field of view either sid
 export const DETECT_RATE = 2.9; // meter per second at close range, standing, moving, dead ahead
 export const DETECT_DECAY = 0.12; // per second when they can't see or hear you
 export const SUSPICIOUS_AT = 0.35; // meter level where they stop and look your way
+export const HUNTER_CHANCE = 0.35; // share of enemies who, once alert, hunt you down rather than give up
 export const FOLIAGE_SEE = 0.25; // visibility left after looking through one pine's branches (enough cover to stop them firing)
 export const STANCE_SEEN = { stand: 1, crouch: 0.45, prone: 0.12 } as const;
 export const HEAR_STEPS = { stand: 14, crouch: 6, prone: 2 } as const; // m footsteps carry (doubled sprinting)

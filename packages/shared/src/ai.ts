@@ -1,6 +1,6 @@
 import {
   DETECT_DECAY, DETECT_RATE, ENEMY_ACCURACY, ENEMY_AIM_TIME, ENEMY_FIRE_INTERVAL, ENEMY_FIRE_RANGE, ENEMY_HEALTH,
-  ENEMY_ID_BASE, ENEMY_RUN, ENEMY_WALK, HEAR_SHOT, HEAR_STEPS, SHOUT_RANGE, STANCES, STANCE_SEEN, SUSPICIOUS_AT,
+  ENEMY_ID_BASE, ENEMY_RUN, HUNTER_CHANCE, ENEMY_WALK, HEAR_SHOT, HEAR_STEPS, SHOUT_RANGE, STANCES, STANCE_SEEN, SUSPICIOUS_AT,
   VIEW_HALF_ANGLE, VIEW_RANGE, type Stance,
 } from './constants.ts';
 import { Health, type HitResult, type HitZone } from './hitzones.ts';
@@ -14,7 +14,9 @@ import { makeRng } from './rng.ts';
 // suspicious saw or heard something: stops, turns to it, after a moment walks over to look
 // search     goes to where you were (or the gunshot came from) and looks around, then gives up
 // alert      knows where you are: shouts (nearby enemies come searching), takes a knee, shoots;
-//            loses you behind cover, runs to where you were last seen
+//            loses you behind cover, runs to where you were last seen. Most give up after a few
+//            seconds out of sight and go back to searching; a hunter (HUNTER_CHANCE) keeps
+//            tracking you down, guessing better as it closes in, for a minute and a half.
 
 export type AiState = 'patrol' | 'suspicious' | 'search' | 'alert';
 export const AI_STATES: AiState[] = ['patrol', 'suspicious', 'search', 'alert'];
@@ -72,13 +74,17 @@ interface Enemy {
   fightStance: Stance;
   locked: boolean; // in sight and aimed in: the next shots are the dangerous ones
   phase: number; // per-enemy offset for idle looking around
+  hunter: boolean; // rolled on each alert: keeps tracking you instead of giving up
+  patience: number; // s out of sight before an alert enemy gives up and goes back to searching
 }
 
 const RADIUS = 0.35; // m, for walking round things
 const TURN_RATE = 5; // rad/s
 const SEARCH_LOOK = 10; // s looking around at a search point before giving up
 const KILL_WITNESS = 45; // m: enemies this close who see a friend killed go on alert
-const LOSE_TARGET = 15; // s out of sight before an alert enemy goes back to searching
+const PATIENCE: [number, number] = [5, 10]; // s out of sight before an alert enemy gives up (orange again)
+const HUNT_PATIENCE = 90; // s a hunter keeps tracking you out of sight
+const HUNT_GUESS = 12; // m off a hunter's guess at where you went
 const BOUNDS = 40; // m inside the map edge they stay
 
 export class EnemyAi {
@@ -246,7 +252,11 @@ export class EnemyAi {
     e.stateT = 0;
     e.arrivedT = 0;
     if (s !== 'alert') e.target = null;
-    if (s === 'alert') e.fightStance = e.fixed || Math.random() < 0.5 ? 'stand' : 'crouch';
+    if (s === 'alert') {
+      e.fightStance = e.fixed || Math.random() < 0.5 ? 'stand' : 'crouch';
+      e.hunter = Math.random() < HUNTER_CHANCE;
+      e.patience = e.hunter ? HUNT_PATIENCE : rand(PATIENCE[0], PATIENCE[1]);
+    }
   }
 
   // --- Behaviours ---
@@ -323,11 +333,15 @@ export class EnemyAi {
     else {
       e.stance = 'stand';
       if (this.walk(e, lk.x, lk.z, ENEMY_RUN, dt) < 4) {
-        this.setState(e, 'search');
-        e.arrivedT = 0.01; // already there: start looking around
+        if (e.hunter) e.lastKnown = fuzz(p.pos, HUNT_GUESS, this.map); // picks up your trail: on to the next guess
+        else {
+          this.setState(e, 'search');
+          e.arrivedT = 0.01; // already there: start looking around
+          return null;
+        }
       }
     }
-    if (e.lostT > LOSE_TARGET) this.setState(e, 'search');
+    if (e.lostT > e.patience) this.setState(e, 'search');
     return null;
   }
 
@@ -407,7 +421,7 @@ function plan(map: GameMap, obstacles: Obstacles): Enemy[] {
       pos: { x, y, z }, yaw, pitch: 0, stance, state: 'patrol', stateT: 0,
       health: new Health(ENEMY_HEALTH), dead: false,
       home: { x, z, yaw, stance }, fixed: opts.fixed ?? false, path: opts.path ?? null, pathIdx: 0,
-      meter: new Map(), lastKnown: null, target: null, aimT: 0, fireCd: 0, lostT: 0, arrivedT: 0,
+      meter: new Map(), lastKnown: null, target: null, aimT: 0, fireCd: 0, lostT: 0, arrivedT: 0, hunter: false, patience: PATIENCE[0],
       fightStance: 'stand', locked: false, phase: rng.range(0, Math.PI * 2),
     });
   };

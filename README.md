@@ -91,7 +91,9 @@ The server runs the enemy soldiers (`packages/shared/src/ai.ts`, tuning in `cons
 two patrols round each outpost, roamers walking the route, and sentry pairs posted beside it watching
 back the way you come. Each one goes from patrolling to suspicious (stops, turns your way, then walks
 over), to searching (goes where you were and looks around), to alert (shouts so the ones near come
-too, takes a knee and shoots, and runs to where it last saw you if you break line of sight).
+too, takes a knee and shoots, and runs to where it last saw you if you break line of sight). Out
+of sight, most of them give up after five to ten seconds and go back to searching (orange); about
+one in three is a hunter that stays red and keeps tracking you down for a minute and a half.
 
 They see you sooner close up, standing, moving and in front of them, and much later prone, still,
 far away, at the edge of their view or behind pine branches. They hear footsteps (sprinting most)
