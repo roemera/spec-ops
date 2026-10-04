@@ -44,6 +44,8 @@ export interface HudState {
   protectedFor: number; // s of spawn protection left
   hurt: number; // 0..1 red flash after being hit
   markers: CompassMarker[]; // the extraction pad and teammates, on the compass strip
+  /** Black over everything with a quote in white: after you bleed out, and as a mission opens. */
+  curtain: { quote: Quote; alpha: number; sub: string | null } | null;
 }
 
 /** Something shown on the compass strip: where it lies (degrees, 0 = north) and how far. */
@@ -117,6 +119,7 @@ export class Hud {
       if (s.protectedFor > 0) this.text(`SPAWN PROTECTION ${Math.ceil(s.protectedFor)}`, w / 2, 84, 13, s.scoped ? C.white : C.ink, 'center');
       if (s.message) this.text(s.message.text, w / 2, h * 0.64, 16, s.scoped && s.message.color === C.ink ? C.white : s.message.color, 'center', 700);
     }
+    if (s.curtain && s.curtain.alpha > 0) this.drawCurtain(s.curtain);
     if (s.scores) this.drawScores(s.scores, s.myId);
     if (!s.locked) {
       if (s.everLocked) this.drawGrabMouse();
@@ -324,7 +327,7 @@ export class Hud {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
     const y = h * 0.3;
-    if (d.quote) this.drawQuote(d.quote, y + 160);
+    if (d.quote && !d.out) this.drawQuote(d.quote, y + 160); // out: the black curtain carries it
     if (d.out) {
       this.text('OUT', w / 2, y, 64, C.ink, 'center', 800);
       this.text('YOU BLED OUT  ·  WAITING FOR THE SQUAD', w / 2, y + 52, 15, C.ink, 'center');
@@ -337,6 +340,39 @@ export class Hud {
   }
 
   /** A death-screen quote, wrapped, centred, with who said it and when underneath. */
+  /** The old Call of Duty death screen: fade to black, the quote in white in the middle. */
+  private drawCurtain(c: NonNullable<HudState['curtain']>) {
+    const { ctx, w, h } = this;
+    ctx.fillStyle = `rgba(0,0,0,${Math.min(1, c.alpha).toFixed(3)})`;
+    ctx.fillRect(0, 0, w, h);
+    // The words come up a beat behind the black, and go a beat before it.
+    const a = Math.max(0, Math.min(1, (c.alpha - 0.35) / 0.65));
+    if (a <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = a;
+    const size = Math.min(26, Math.max(17, w / 48)), lineH = size * 1.5, maxW = Math.min(760, w - 64);
+    ctx.font = `italic 500 ${size}px Georgia, "Times New Roman", serif`;
+    ctx.letterSpacing = '0px';
+    const lines: string[] = [];
+    let line = '';
+    for (const word of `“${c.quote.text}”`.split(' ')) {
+      const next = line ? `${line} ${word}` : word;
+      if (line && ctx.measureText(next).width > maxW) {
+        lines.push(line);
+        line = word;
+      } else line = next;
+    }
+    lines.push(line);
+    const top = h / 2 - ((lines.length - 1) * lineH) / 2 - 12;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#f2f2f2';
+    lines.forEach((l, i) => ctx.fillText(l, w / 2, top + i * lineH));
+    this.text(`— DONALD J. TRUMP  ·  ${c.quote.when.toUpperCase()}`, w / 2, top + lines.length * lineH + 10, 12, 'rgba(242,242,242,0.6)', 'center', 700);
+    if (c.sub) this.text(c.sub, w / 2, h - 56, 13, 'rgba(242,242,242,0.5)', 'center', 700);
+    ctx.restore();
+  }
+
   private drawQuote(q: Quote, top: number) {
     const { ctx, w } = this;
     const size = 17, lineH = 25, maxW = Math.min(640, w - 64);

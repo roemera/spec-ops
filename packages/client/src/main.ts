@@ -18,7 +18,8 @@ import { Bullets, type Bullet, type SoldierHit } from './sim/bullets';
 import { addViewArms, buildRifle } from './models/rifle';
 import { strideFor } from './models/soldier';
 import { Input } from './input';
-import { Hud, HUD_COLORS, type CompassMarker } from './ui/hud';
+import { Hud, HUD_COLORS, type CompassMarker, type HudState } from './ui/hud';
+
 import { nextQuote, type Quote } from './quotes';
 import { Fx } from './fx';
 import { Audio } from './audio';
@@ -28,6 +29,9 @@ import { Decals } from './render/decals';
 import { Pickups } from './pickups';
 import { Net } from './net';
 import { Menu, rejoin, type JoinChoice } from './ui/menu';
+
+const INTRO_HOLD = 3; // s of black and a quote as a mission opens
+const INTRO_FADE = 1; // s fading in to the game after it
 
 const HURT_FLASH = 1.1; // s the red screen takes to fade after a hit
 
@@ -144,6 +148,9 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   let life: Life = 'up';
   let down: { by: string; zone: string; until: number; quote: Quote } | null = null;
   let lobbyQuote = nextQuote(); // the squad screen's quote: the same until the next mission ends
+  const wall = () => performance.now() / 1000; // the fades run on the real clock, not the (capped) game one
+  let outAt = 0; // when you bled out (wall clock): the screen fades to black from here
+  let intro: { quote: Quote; at: number } | null = null; // a mission opening: black, a quote, then the game
   let protectedUntil = 0, hurtAt = -10;
   let scores: Score[] = [];
   const names = new Map<number, string>();
@@ -320,6 +327,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
           scores = zeroScores(msg.players);
           enemies.clear(); // the server stood them all up again
           decals.clear(); // (pickups: the server sends the new list)
+          intro = { quote: nextQuote(), at: wall() };
         }
         phase = msg.phase;
         if (phase === 'live') menu.hide();
@@ -404,7 +412,10 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
         }
       } else if (msg.t === 'bledOut') {
         scores = msg.scores;
-        if (msg.id === net.id) life = 'dead';
+        if (msg.id === net.id) {
+          life = 'dead';
+          outAt = wall();
+        }
         else {
           const r = remotes.byId.get(msg.id);
           if (r && r.life !== 'dead') audio.play('impact', { pos: r.model.root.position.clone(), volume: 0.6, rate: 0.6 });
@@ -636,6 +647,17 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     audio.play('step', { volume, rate: 0.88 + Math.random() * 0.24 });
   }
 
+  /** Bled out: fade to black over 1.5 s. A mission opening: 3 s of black, then a 1 s fade in. */
+  function curtain(): HudState['curtain'] {
+    if (playing() && life === 'dead' && down) return { quote: down.quote, alpha: (wall() - outAt) / 1.5, sub: 'YOU BLED OUT  ·  WAITING FOR THE SQUAD' };
+    if (intro) {
+      const t = wall() - intro.at;
+      if (t > INTRO_HOLD + INTRO_FADE || !playing()) intro = null;
+      else return { quote: intro.quote, alpha: t < INTRO_HOLD ? 1 : 1 - (t - INTRO_HOLD) / INTRO_FADE, sub: null };
+    }
+    return null;
+  }
+
   function frame() {
     const now = performance.now() / 1000;
     const dt = Math.min(0.1, now - last);
@@ -709,6 +731,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       protectedFor: Math.max(0, protectedUntil - time),
       hurt: Math.max(0, 1 - (time - hurtAt) / HURT_FLASH),
       markers: playing() ? compassMarkers() : [],
+      curtain: curtain(),
     });
     requestAnimationFrame(frame);
   }
