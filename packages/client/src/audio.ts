@@ -64,17 +64,138 @@ const lowpass = (a: number) => {
   return (x: number) => (y += a * (x - y));
 };
 
-/** Metal sliding on metal between `from` and `to` s: bright filtered noise with a gritty buzz. */
-const scraper = () => {
-  const lp = lowpass(0.35), lp2 = lowpass(0.05);
-  return (t: number, from: number, to: number, amp: number, r: () => number) => {
-    const n = r() * 2 - 1, band = lp(n) - lp2(n); // band-pass: no rumble, no hiss
-    if (t < from || t > to) return 0;
-    const k = (t - from) / (to - from);
-    const grit = 0.6 + 0.4 * Math.sin(2 * Math.PI * 140 * t + 3 * Math.sin(2 * Math.PI * 23 * t));
-    return band * grit * Math.sin(Math.PI * k) * amp * 2.5;
+/**
+ * A two-pole resonator: one mode ringing at `freq` Hz, dying by `decay` (1/s). A unit impulse in
+ * rings at about unit amplitude. Stateful: feed it one sample at a time.
+ */
+const resonator = (freq: number, decay: number) => {
+  const w = (2 * Math.PI * freq) / RATE, r = Math.exp(-decay / RATE);
+  const c = 2 * r * Math.cos(w), r2 = r * r, g = Math.sin(w);
+  let y1 = 0, y2 = 0;
+  return (x: number) => {
+    const y = c * y1 - r2 * y2 + g * x;
+    y2 = y1;
+    y1 = y;
+    return y;
   };
 };
+
+/**
+ * One part of the action hitting or sliding on another. With `len` it slides (a scrape) for that
+ * long, otherwise it strikes once. `f` is the part's lowest mode (low for a magazine, high for a pin),
+ * `wood` how much it thumps the stock.
+ */
+interface MechEvent { at: number; f: number; amp: number; len?: number; wood?: number; decay?: number }
+
+/**
+ * Gun mechanics as modal synthesis: each event is a burst of noise (a strike) or a train of
+ * stick-slip impulses (a slide) driving a few resonant modes of a small steel part (the mode
+ * ratios of a free bar), plus the raw click itself and a knock through the wooden stock. Real
+ * clicks are mostly the transient: the modes are short and quiet, so it clacks rather than dings.
+ */
+const mech = (events: MechEvent[]): Gen => {
+  const parts = events.map((e) => {
+    const decay = e.decay ?? 70;
+    const modes = [1, 2.756, 5.404, 8.933].filter((k) => e.f * k < 16000);
+    return {
+      e,
+      bank: modes.map((k, i) => resonator(e.f * k, decay * (1 + i * 0.8))),
+      wood: [resonator(230, 55), resonator(470, 80)],
+      hp: lowpass(0.15),
+      end: e.at + (e.len ?? 0) + 0.35,
+    };
+  });
+  return (t, r) => {
+    let out = 0;
+    for (const p of parts) {
+      const { e } = p, u = t - e.at;
+      if (u < 0 || t > p.end) continue;
+      let x = 0;
+      if (e.len) {
+        // Sliding: irregular catches of the surfaces, loudest mid-stroke.
+        if (u < e.len) {
+          const env = Math.sin((Math.PI * u) / e.len);
+          if (r() < 1400 / RATE) x += (r() * 2 - 1) * env * 0.75;
+          x += (r() * 2 - 1) * env * 0.07;
+        }
+      } else x = (r() * 2 - 1) * Math.exp(-u / 0.00025) + (u * RATE < 1 ? 1 : 0);
+      x *= e.amp;
+      const click = x - p.hp(x); // the transient, rumble taken off
+      let ring = 0;
+      for (let i = 0; i < p.bank.length; i++) ring += p.bank[i](x) / (1 + i);
+      const knock = (e.wood ?? 0) * (p.wood[0](x) + 0.5 * p.wood[1](x));
+      out += click * 1.6 + ring * 0.35 + knock * 0.5;
+    }
+    return out;
+  };
+};
+
+/** Friedlander pulse: the shape of a blast wave. A push lasting `T` s, then a longer, shallower pull. */
+const friedlander = (t: number, T: number) => (t < 0 ? 0 : (1 - t / T) * Math.exp(-t / T));
+
+/**
+ * The shot, rendered whole: a dry close-up blast, then a valley's worth of reflections made by
+ * scattering copies of it (sparse "velvet" taps), each later copy darker, since air and snow soak
+ * up the top end first.
+ */
+function shotBuffer(variant: number, seconds: number) {
+  const rnd = makeRng(4242 + variant * 17).next;
+  const n = Math.floor(seconds * RATE);
+  const jit = (a: number) => 1 + (rnd() * 2 - 1) * a;
+  // Dry blast, 60 ms.
+  const dl = Math.floor(0.06 * RATE), dry = new Float32Array(dl);
+  const T = 0.0006 * jit(0.15), Tsub = 0.004 * jit(0.15);
+  const gasLp = lowpass(0.5), ring = [resonator(2150 * jit(0.05), 45), resonator(3380 * jit(0.05), 60), resonator(5100 * jit(0.05), 90)];
+  const ground = 0.0042 * jit(0.2), groundLp = lowpass(0.25);
+  const pre = new Float32Array(dl);
+  for (let i = 0; i < dl; i++) {
+    const t = i / RATE;
+    // The crack: a sub-millisecond N, up then down.
+    const crack = t < 0.00011 ? 0.8 : t < 0.00024 ? -0.8 : 0;
+    const gas = gasLp(rnd() * 2 - 1) * Math.exp(-t * 55) * Math.min(1, t / 0.0004) * 0.9;
+    pre[i] = crack + 1.4 * friedlander(t, T) + 0.35 * friedlander(t, Tsub) + gas;
+  }
+  for (let i = 0; i < dl; i++) {
+    // The ground bounce arrives a few ms late, a little dulled.
+    const j = i - Math.round(ground * RATE);
+    const bounce = j >= 0 ? groundLp(pre[j]) * 0.55 : 0;
+    const x = pre[i] + bounce;
+    let rg = 0;
+    for (let k = 0; k < ring.length; k++) rg += ring[k](i < 90 ? pre[i] * 0.02 : 0) / (1 + k);
+    dry[i] = Math.tanh(x * 1.5) + rg * 0.5;
+  }
+  // Three shades of the blast for the reflections: bright (near), dull, dark (far).
+  const shade = (a: number) => {
+    const l1 = lowpass(a), l2 = lowpass(a);
+    return dry.map((x) => l2(l1(x)));
+  };
+  const shades = [shade(0.3), shade(0.09), shade(0.035)];
+  const out = new Float32Array(n);
+  out.set(dry);
+  const tap = (at: number, amp: number) => {
+    const s = shades[at < 0.15 ? 0 : at < 0.6 ? 1 : 2];
+    const i0 = Math.floor(at * RATE);
+    for (let k = 0; k < dl && i0 + k < n; k++) out[i0 + k] += s[k] * amp;
+  };
+  // Diffuse rolling tail: taps thinning out and dying away.
+  for (let t = 0.012; t < seconds - 0.06; ) {
+    const env = Math.min(1, t / 0.08) * (Math.exp(-t * 2.4) * 0.9 + Math.exp(-t * 0.9) * 0.15);
+    tap(t, (rnd() < 0.5 ? -1 : 1) * env * 0.05 * (0.5 + rnd()));
+    t += (1 / 1400) * (1 + t * 2) * (0.5 + rnd());
+  }
+  // Slapback off the slopes: clusters of taps, each echo later, quieter, smeared wider.
+  const echoes = [[0.17, 0.5], [0.39, 0.33], [0.74, 0.22], [1.2, 0.13]];
+  for (const [at, amp] of echoes) {
+    const a = at * jit(0.15), spread = 0.015 + a * 0.05;
+    for (let k = 0; k < 10; k++) tap(a + rnd() * spread, (rnd() < 0.5 ? -1 : 1) * amp * (0.4 + 0.6 * rnd()) * 0.45);
+  }
+  // Fade the very end so the take doesn't stop on a sample.
+  for (let i = n - 2000; i < n; i++) out[i] *= (n - i) / 2000;
+  let peak = 0;
+  for (const x of out) peak = Math.max(peak, Math.abs(x));
+  for (let i = 0; i < n; i++) out[i] *= 3.4 / peak;
+  return out;
+}
 
 /** One take of a sound as samples: generated, looped if it loops, soft clipped. */
 export function renderSound(name: SoundName, variant: number): Float32Array<ArrayBuffer> {
@@ -110,76 +231,87 @@ export const GENERATORS: Record<SoundName, SoundDef> = {
     seconds: 0.35,
     gen: () => voice(0.35, (t) => 120 + 60 * (t / 0.35), 550, 1000, (t) => Math.min(1, t / 0.04) * Math.exp(-((t - 0.12) ** 2) / 0.02) * 0.8),
   },
-  // A rifle shot up close: the supersonic crack, the muzzle blast, a chest-thump of low end, then the
-  // report rolling round the valley, slapping back off the slopes a few times, duller each time.
+  // A rifle shot from behind the stock, built the way recordings break one down: the bullet's
+  // N-wave crack, the muzzle blast (a Friedlander pressure pulse, a millisecond or so of push then a
+  // longer pull), the receiver ringing, the ground bounce a few ms later, then the report rolling
+  // round the valley, smeared and duller with each slope it comes back off.
   shot: {
     seconds: 2.6,
-    gen: () => {
-      const blastLp = lowpass(0.3), tailLp = lowpass(0.035), tailLp2 = lowpass(0.05), echoLp = lowpass(0.08);
-      const echoes = [[0.16, 0.45], [0.37, 0.3], [0.71, 0.2], [1.15, 0.12]];
-      return (t, r) => {
-        const n = r() * 2 - 1;
-        // N-wave: a sharp positive spike then negative, under a millisecond, then bright hash.
-        const crack = (t < 0.00035 ? 1 : t < 0.0007 ? -0.8 : 0) * 2.5 + n * Math.exp(-t * 700) * 1.4;
-        const blast = blastLp(n) * Math.exp(-t * 28) * 3.2;
-        const thump = Math.sin(2 * Math.PI * (48 + 70 * Math.exp(-t * 35)) * t) * Math.exp(-t * 11) * 1.4;
-        const tail = tailLp2(tailLp(n)) * (Math.exp(-t * 1.6) * 0.8 + 0.2 * Math.exp(-t * 0.6)) * 9 * Math.min(1, t * 20);
-        let echo = 0;
-        const e = echoLp(n);
-        for (const [at, amp] of echoes) if (t > at) echo += e * amp * Math.exp(-(t - at) * 14) * 3.5;
-        return Math.tanh(crack + blast + thump + tail + echo) * 1.9;
-      };
+    variants: 3,
+    gen: (v) => {
+      const buf = shotBuffer(v, 2.6);
+      return (t) => buf[Math.min(buf.length - 1, Math.round(t * RATE))];
     },
   },
-  // Working the bolt: lift (click), draw back (slide, then the empty case ticks out against the
-  // stop), drive forward (slide, a round strips into the chamber), turn down to lock (solid click).
+  // Working the bolt: lift (click), draw back (steel on steel, a clack at the stop, the empty brass
+  // tinkles out), drive forward (a round strips into the chamber), turn down to lock (solid clack).
   bolt: {
-    seconds: 0.75,
-    gen: () => {
-      const sc = scraper();
-      return (t, r) =>
-        clank(t, 0.01, 1700, 60, 0.7, r) +
-        sc(t, 0.07, 0.19, 0.5, r) + clank(t, 0.19, 1150, 45, 1, r) + clank(t, 0.235, 2900, 90, 0.35, r) +
-        sc(t, 0.36, 0.48, 0.55, r) + clank(t, 0.48, 1350, 40, 1.1, r) +
-        clank(t, 0.6, 2100, 55, 0.85, r);
-    },
+    seconds: 0.8,
+    gen: () =>
+      mech([
+        { at: 0.01, f: 1900, amp: 0.8, wood: 0.3 },
+        { at: 0.07, len: 0.11, f: 2600, amp: 0.45 },
+        { at: 0.185, f: 1250, amp: 1, wood: 0.6 },
+        { at: 0.23, f: 3900, amp: 0.25, decay: 14 }, // the case
+        { at: 0.3, f: 4700, amp: 0.1, decay: 18 },
+        { at: 0.35, len: 0.11, f: 2400, amp: 0.5 },
+        { at: 0.465, f: 1400, amp: 1, wood: 0.5 },
+        { at: 0.6, f: 2050, amp: 0.9, wood: 0.8 },
+      ]),
   },
-  // Magazine out: the release clicks, the mag slides out of the well, a hand into a pouch.
+  // Magazine out: the release clicks, the mag slides out of the well, a hand stuffs it in a pouch.
   reload: {
     seconds: 0.75,
     gen: () => {
-      const sc = scraper(), cloth = lowpass(0.06);
+      const m = mech([
+        { at: 0.02, f: 3100, amp: 0.55, wood: 0.15 },
+        { at: 0.05, len: 0.1, f: 1700, amp: 0.4 },
+        { at: 0.155, f: 950, amp: 0.45, wood: 0.25 },
+      ]);
+      const cloth = lowpass(0.12), cloth2 = lowpass(0.02);
+      let grain = 0;
       return (t, r) => {
-        const n = r() * 2 - 1, c = cloth(n);
-        const rustle = t > 0.36 && t < 0.62 ? c * 4 * Math.sin((Math.PI * (t - 0.36)) / 0.26) * (0.6 + 0.4 * Math.sin(t * 90)) : 0;
-        return clank(t, 0.02, 2600, 80, 0.55, r) + sc(t, 0.05, 0.17, 0.6, r) + clank(t, 0.17, 780, 50, 0.45, r) + rustle * 0.6;
+        const n = r() * 2 - 1, c = cloth(n) - cloth2(n);
+        // Canvas: a band of noise in uneven scuffs.
+        if (r() < 0.01) grain = 0.4 + r() * 0.6;
+        grain *= 0.9993;
+        const rustle = t > 0.36 && t < 0.64 ? c * 5 * grain * Math.sin((Math.PI * (t - 0.36)) / 0.28) : 0;
+        return m(t, r) + rustle;
       };
     },
   },
   // Magazine in: a short slide up the well, the solid seat, the catch snapping over.
   magIn: {
     seconds: 0.3,
-    gen: () => {
-      const sc = scraper();
-      return (t, r) => sc(t, 0, 0.06, 0.5, r) + clank(t, 0.06, 820, 38, 1.2, r) + clank(t, 0.075, 2400, 85, 0.55, r);
-    },
+    gen: () =>
+      mech([
+        { at: 0.0, len: 0.05, f: 1600, amp: 0.4 },
+        { at: 0.06, f: 850, amp: 1.2, wood: 1 },
+        { at: 0.073, f: 3000, amp: 0.6 },
+      ]),
   },
   // Perfect active reload: the palm slaps the magazine home hard, a bright catch.
   perfect: {
     seconds: 0.4,
-    gen: () => (t, r) =>
-      Math.sin(2 * Math.PI * 170 * t) * Math.exp(-t * 45) * 0.9 + clank(t, 0.0, 900, 35, 0.9, r) + clank(t, 0.012, 3100, 70, 0.45, r),
+    gen: () => {
+      const m = mech([
+        { at: 0.004, f: 800, amp: 1.4, wood: 1.3 },
+        { at: 0.014, f: 3400, amp: 0.7 },
+      ]);
+      const skin = lowpass(0.2);
+      return (t, r) => m(t, r) + skin(r() * 2 - 1) * 2.5 * Math.exp(-t * 160);
+    },
   },
-  // Fumbled active reload: a dull metal clunk and a rattle.
+  // Fumbled active reload: a dull clunk off the edge of the well, then the mag rattling loose.
   jam: {
     seconds: 0.5,
-    gen: () => {
-      let lp = 0;
-      return (t, r) => {
-        lp += 0.2 * (r() * 2 - 1 - lp);
-        return Math.sin(2 * Math.PI * 190 * t) * 1.2 * Math.exp(-t * 18) + 1.5 * lp * Math.exp(-t * 14) + 0.5 * click(t, 0.16, 700, r) + 0.4 * click(t, 0.27, 900, r);
-      };
-    },
+    gen: () =>
+      mech([
+        { at: 0.0, f: 620, amp: 1.1, wood: 1.4, decay: 120 },
+        { at: 0.13, f: 2200, amp: 0.35 },
+        { at: 0.19, f: 1900, amp: 0.25, wood: 0.3 },
+        { at: 0.26, f: 2400, amp: 0.3 },
+      ]),
   },
   // Picking something up: a hand on canvas, rounds or bottles rattling, a latch.
   pickup: {
@@ -210,7 +342,7 @@ export const GENERATORS: Record<SoundName, SoundDef> = {
   // Dry fire: the firing pin snaps on an empty chamber.
   dry: {
     seconds: 0.15,
-    gen: () => (t, r) => clank(t, 0, 3300, 110, 0.7, r),
+    gen: () => mech([{ at: 0.0, f: 3300, amp: 0.8, wood: 0.25 }, { at: 0.011, f: 4400, amp: 0.25 }]),
   },
   // A boot in snow: a muffled heel thump and a squeak-crunch of packed grains. Several takes,
   // picked at random, so a run of steps never repeats.
