@@ -39,6 +39,7 @@ export interface EnemyShot {
 /** What clients draw. */
 export interface EnemyView {
   id: number;
+  locked: boolean; // aim settled on someone: about to fire well (the laser holds steady)
   stance: Stance;
   state: AiState;
   dead: boolean;
@@ -69,6 +70,7 @@ interface Enemy {
   lostT: number; // s since the target was last in sight
   arrivedT: number; // s spent looking around at a search point
   fightStance: Stance;
+  locked: boolean; // in sight and aimed in: the next shots are the dangerous ones
   phase: number; // per-enemy offset for idle looking around
 }
 
@@ -99,7 +101,7 @@ export class EnemyAi {
   }
 
   views(): EnemyView[] {
-    return this.enemies.map((e) => ({ id: e.id, stance: e.stance, state: e.state, dead: e.dead, pos: { ...e.pos }, yaw: e.yaw, pitch: e.pitch }));
+    return this.enemies.map((e) => ({ id: e.id, locked: e.state === 'alert' && e.locked, stance: e.stance, state: e.state, dead: e.dead, pos: { ...e.pos }, yaw: e.yaw, pitch: e.pitch }));
   }
 
   step(dt: number, players: PlayerView[]): EnemyShot[] {
@@ -259,8 +261,10 @@ export class EnemyAi {
   private suspicious(e: Enemy, dt: number) {
     const lk = e.lastKnown;
     if (!lk) return this.setState(e, 'patrol');
-    // Stop and look; after a moment, walk over carefully.
-    if (e.stateT < 2.5 || e.fixed) this.face(e, lk, dt);
+    // Stop and look, sweeping the gun (and its laser) back and forth over where it came from;
+    // after a moment, walk over carefully.
+    const scan = e.stateT * 1.6 + e.phase;
+    if (e.stateT < 2.5 || e.fixed) this.face(e, lk, dt, Math.sin(scan) * 0.35, Math.sin(scan * 0.7) * 0.06);
     else if (this.walk(e, lk.x, lk.z, ENEMY_WALK, dt) < 4) this.setState(e, 'search');
     if (e.stateT > 3 && maxMeter(e) < 0.1) this.setState(e, 'patrol');
   }
@@ -273,6 +277,7 @@ export class EnemyAi {
     // There (or stuck up a tower): look around, then give up.
     e.arrivedT += dt;
     this.turn(e, Math.atan2(-(lk.x - e.pos.x), -(lk.z - e.pos.z)) + Math.sin(e.arrivedT * 0.8) * 1.4, dt);
+    e.pitch = Math.sin(e.arrivedT * 1.3 + e.phase) * 0.08;
     if (e.arrivedT > SEARCH_LOOK) {
       e.lastKnown = null;
       for (const k of e.meter.keys()) e.meter.set(k, Math.min(e.meter.get(k)!, SUSPICIOUS_AT * 0.5));
@@ -294,7 +299,10 @@ export class EnemyAi {
       e.lastKnown = { ...p.pos };
       e.lostT = 0;
       e.stance = e.fightStance;
-      this.face(e, chest, dt);
+      // The aim wanders onto you and settles: a steady laser means the next shot will likely hit.
+      const aim = Math.min(1, e.aimT / ENEMY_AIM_TIME), wob = 1 - aim, t = this.time * 2.6 + e.phase;
+      this.face(e, chest, dt, wob * 0.09 * Math.sin(t), wob * 0.05 * Math.sin(t * 1.3));
+      e.locked = aim > 0.55;
       e.aimT += dt;
       e.fireCd -= dt;
       if (e.fireCd > 0) return null;
@@ -302,6 +310,7 @@ export class EnemyAi {
       return this.shoot(e, p, vis, d);
     }
     // Lost sight: run to where they were.
+    e.locked = false;
     e.aimT = Math.max(0, e.aimT - dt * 2);
     e.lostT += dt;
     const lk = e.lastKnown ?? p.pos;
@@ -364,11 +373,12 @@ export class EnemyAi {
     return dist - step;
   }
 
-  private face(e: Enemy, at: Vec3, dt: number) {
+  /** Look (and point the gun) at a point, off by `yawOff` / `pitchOff` rad (scanning, unsteady aim). */
+  private face(e: Enemy, at: Vec3, dt: number, yawOff = 0, pitchOff = 0) {
     const dx = at.x - e.pos.x, dz = at.z - e.pos.z;
-    this.turn(e, Math.atan2(-dx, -dz), dt);
+    this.turn(e, Math.atan2(-dx, -dz) + yawOff, dt);
     const from = eye(e);
-    e.pitch = Math.atan2(at.y - from.y, Math.max(1, Math.hypot(dx, dz)));
+    e.pitch = Math.atan2(at.y - from.y, Math.max(1, Math.hypot(dx, dz))) + pitchOff;
   }
 
   private turn(e: Enemy, yaw: number, dt: number) {
@@ -393,15 +403,15 @@ function plan(map: GameMap, obstacles: Obstacles): Enemy[] {
       health: new Health(ENEMY_HEALTH), dead: false,
       home: { x, z, yaw, stance }, fixed: opts.fixed ?? false, path: opts.path ?? null, pathIdx: 0,
       meter: new Map(), lastKnown: null, target: null, aimT: 0, fireCd: 0, lostT: 0, arrivedT: 0,
-      fightStance: 'stand', phase: rng.range(0, Math.PI * 2),
+      fightStance: 'stand', locked: false, phase: rng.range(0, Math.PI * 2),
     });
   };
   const start = map.start;
   for (const post of map.outposts) {
     const facing = Math.atan2(-(start.x - post.x), -(start.z - post.z)); // toward where you come from
     const tower = solids.find((o) => o.kind === 'tower' && Math.hypot(o.x - post.x, o.z - post.z) < post.r + 2);
-    if (tower && rng.next() < 0.75) add(tower.x, tower.y + tower.size[1] + 0.15, tower.z, facing + rng.range(-0.6, 0.6), 'stand', { fixed: true });
-    for (let i = 0, made = 0, want = rng.int(2, 3); i < 20 && made < want; i++) {
+    if (tower && rng.next() < 0.9) add(tower.x, tower.y + tower.size[1] + 0.15, tower.z, facing + rng.range(-0.6, 0.6), 'stand', { fixed: true });
+    for (let i = 0, made = 0, want = rng.int(3, 5); i < 30 && made < want; i++) {
       const a = rng.range(0, Math.PI * 2), d = rng.range(2, post.r * 0.75);
       const x = post.x + Math.cos(a) * d, z = post.z + Math.sin(a) * d;
       const stance: Stance = rng.next() < 0.25 ? 'crouch' : 'stand', turn = rng.range(-1, 1);
@@ -409,7 +419,7 @@ function plan(map: GameMap, obstacles: Obstacles): Enemy[] {
       add(x, map.heightAt(x, z), z, facing + turn, stance);
       made++;
     }
-    // A patrol round the edge of the clearing.
+    // Patrols round the edge of the clearing: one, sometimes a second going the other way.
     const a0 = rng.range(0, Math.PI * 2);
     const loop: Point[] = [];
     for (let k = 0; k < 6; k++) {
@@ -417,10 +427,14 @@ function plan(map: GameMap, obstacles: Obstacles): Enemy[] {
       loop.push(obstacles.push(post.x + Math.cos(a) * post.r * 0.9, post.z + Math.sin(a) * post.r * 0.9, RADIUS + 0.5));
     }
     add(loop[0].x, map.heightAt(loop[0].x, loop[0].z), loop[0].z, 0, 'stand', { path: loop });
+    if (rng.next() < 0.5) {
+      const back = [...loop].reverse();
+      add(back[2].x, map.heightAt(back[2].x, back[2].z), back[2].z, 0, 'stand', { path: back });
+    }
   }
   // Roamers walking the route between outposts, there and back (none near the insertion point).
   const r = map.route;
-  for (const [t0, t1] of [[0.4, 0.64], [0.64, 0.9]]) {
+  for (const [t0, t1] of [[0.4, 0.58], [0.58, 0.76], [0.76, 0.92]]) {
     const i0 = Math.floor(t0 * (r.length - 1)), i1 = Math.floor(t1 * (r.length - 1));
     const there: Point[] = [];
     for (let i = i0; i <= i1; i += 4) there.push(obstacles.push(r[i].x, r[i].z, RADIUS + 0.5));
@@ -429,6 +443,18 @@ function plan(map: GameMap, obstacles: Obstacles): Enemy[] {
       const p = path[startIdx % path.length];
       add(p.x, map.heightAt(p.x, p.z), p.z, 0, 'stand', { path });
       out[out.length - 1].pathIdx = (startIdx + 1) % path.length;
+    }
+  }
+  // Sentry pairs posted off the route, watching back the way you come.
+  for (let k = 0; k < 5; k++) {
+    const i = Math.floor((0.45 + 0.1 * k + rng.range(-0.03, 0.03)) * (r.length - 1));
+    const a = r[i], b = r[Math.min(r.length - 1, i + 1)];
+    const len = Math.hypot(b.x - a.x, b.z - a.z) || 1, side = rng.next() < 0.5 ? -1 : 1, off = rng.range(15, 40);
+    const px = a.x + (-(b.z - a.z) / len) * off * side, pz = a.z + ((b.x - a.x) / len) * off * side;
+    const back = Math.atan2(-(r[0].x - px), -(r[0].z - pz)) + rng.range(-0.5, 0.5);
+    for (const dx of [-1.5, 1.5]) {
+      const p = obstacles.push(px + dx, pz, RADIUS + 0.5);
+      add(p.x, map.heightAt(p.x, p.z), p.z, back + dx * 0.3, rng.next() < 0.4 ? 'crouch' : 'stand');
     }
   }
   return out;

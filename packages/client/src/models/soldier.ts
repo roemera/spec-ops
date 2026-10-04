@@ -4,7 +4,10 @@ import { flat } from '../render/palette';
 import { buildRifle } from './rifle';
 
 // A low poly soldier, one colour, faceless. Origin at the feet, facing -z.
-// Joints are groups; pose() sets them from a stance blend, the aim pitch and a walk phase.
+// Joints are groups; pose() sets them from a stance blend, the aim pitch and how far and fast it walks.
+//
+// The gait: strides lengthen with speed (so legs don't spin at a run), each knee folds as its leg
+// swings through, the hips dip at every footfall, and running leans the body in and lowers the gun.
 
 const THIGH = 0.45;
 const SHIN = 0.48;
@@ -26,8 +29,14 @@ const POSES: Record<Stance, Pose> = {
 
 export interface SoldierModel {
   root: THREE.Group;
-  /** `phase` advances with distance walked; `amount` 0..1 is how much the legs swing. */
-  pose(stance: Stance, pitch: number, phase: number, amount: number, dt: number): void;
+  /**
+   * `walked` is the total distance moved (m), `speed` the current speed (m/s).
+   * Returns true when a foot comes down (play a footstep).
+   */
+  pose(stance: Stance, pitch: number, walked: number, speed: number, dt: number): boolean;
+  /** The end of the rifle barrel, and the group it points down (-z): where the laser comes from. */
+  muzzle: THREE.Object3D;
+  aim: THREE.Object3D;
   /** Ray test against the body parts (world space). Call after the root's world matrix is current. */
   hitTest(origin: THREE.Vector3, dir: THREE.Vector3, len: number): { t: number; zone: HitZone } | null;
   /** The meshes that make up the body, for effects (shatter) and colour swaps. */
@@ -96,27 +105,49 @@ export function buildSoldier(color: number): SoldierModel {
 
   const cur: Pose = { ...POSES.stand };
   const inv = new THREE.Matrix4(), o = new THREE.Vector3(), d = new THREE.Vector3();
+  let phase = 0, lastWalked = NaN, smoothSpeed = 0;
 
   return {
     root,
     parts,
-    pose(stance, pitch, phase, amount, dt) {
+    muzzle: rifle.muzzle,
+    aim,
+    pose(stance, pitch, walked, speed, dt) {
       // Ease toward the stance so changes read as movement, not a pop.
       const target = POSES[stance], k = 1 - Math.exp(-dt * 12);
       for (const key of Object.keys(cur) as Array<keyof Pose>) cur[key] += (target[key] - cur[key]) * k;
-      hips.position.y = cur.hipY;
+      smoothSpeed += (speed - smoothSpeed) * (1 - Math.exp(-dt * 6));
+      const sp = smoothSpeed;
+      const gait = Math.min(1, sp / 1.1); // 0 standing still .. 1 walking
+      const run = Math.max(0, Math.min(1, (sp - 2.2) / 2)); // 0 walking .. 1 running
+      // Phase: half a cycle per stride; strides get longer the faster you go.
+      const stride = 0.55 + 0.28 * sp;
+      const step = Number.isNaN(lastWalked) ? 0 : Math.max(0, Math.min(3, walked - lastWalked));
+      lastWalked = walked;
+      const before = Math.floor(phase / Math.PI);
+      phase += (step / stride) * Math.PI;
+      const footDown = Math.floor(phase / Math.PI) !== before;
+
+      const prone = stance === 'prone';
+      const amp = prone ? gait * 0.3 : gait;
+      // Hips dip as each foot takes the weight; running leans in and lowers the gun.
+      hips.position.y = cur.hipY - (prone ? 0 : (0.025 + 0.035 * run) * gait * (0.5 + 0.5 * Math.cos(2 * phase)));
       hips.rotation.x = cur.hipsX;
-      torso.rotation.x = cur.torsoX;
+      hips.rotation.z = prone ? Math.sin(phase) * 0.12 * gait : 0; // crawling: a wriggle
+      torso.rotation.x = cur.torsoX - (prone ? 0 : 0.22 * run);
+      torso.rotation.y = prone ? 0 : -Math.sin(phase) * (0.06 + 0.06 * run) * gait; // shoulders counter the hips
       const upright = -(cur.hipsX + cur.torsoX); // undo the body tilt for the head and the gun
-      aim.rotation.x = upright + pitch;
-      neck.rotation.x = upright + pitch * 0.6;
-      // Walk: legs swing in opposite phase; each knee bends while its foot swings forward.
-      const amp = stance === 'prone' ? amount * 0.25 : amount;
+      aim.rotation.x = upright + pitch - 0.35 * run;
+      neck.rotation.x = upright + pitch * 0.6 + 0.15 * run;
+      const swing = 0.32 + 0.3 * run, fold = 0.55 + 0.55 * run;
       legs.forEach(({ thigh, knee }, i) => {
         const p = phase + i * Math.PI;
-        thigh.rotation.x = cur.thigh + Math.sin(p) * 0.45 * amp;
-        knee.rotation.x = cur.knee - Math.max(0, Math.cos(p)) * 0.7 * amp;
+        thigh.rotation.x = cur.thigh + Math.sin(p) * swing * amp;
+        // The knee folds while the leg swings through (peaking just as it passes under the body)
+        // and gives a little as the foot lands.
+        knee.rotation.x = cur.knee - (Math.max(0, Math.cos(p - 0.35)) * fold + 0.08) * amp;
       });
+      return footDown && gait > 0.3;
     },
     hitTest(origin, dir, len) {
       let best: { t: number; zone: HitZone } | null = null;

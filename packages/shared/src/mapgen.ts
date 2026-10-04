@@ -97,7 +97,7 @@ export function generateMap(seed: number): GameMap {
 
   // --- Outposts along the route, off to one side ---
   const outposts: Outpost[] = [];
-  const count = rng.int(2, 4);
+  const count = rng.int(3, 4);
   for (let i = 0; i < count; i++) {
     // Spread over the route from about 40% on: the first stretch from the insertion point is quiet.
     const t = 0.36 + (0.52 * (i + 0.5)) / count + rng.range(-0.04, 0.04);

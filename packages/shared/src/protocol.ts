@@ -4,7 +4,7 @@ import { AI_STATES, type EnemyView } from './ai.ts';
 
 // Network messages. Rare messages are JSON; the 20 Hz soldier state is a 36-byte binary packet.
 
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 export const DEFAULT_PORT = 8080;
 export const STATE_HZ = 20;
 export const MAX_PLAYERS = 8;
@@ -114,7 +114,7 @@ export function encodeEnemies(list: EnemyView[]): ArrayBuffer {
   list.forEach((e, i) => {
     const o = 4 + i * ENEMY_BYTES;
     v.setUint8(o, e.id);
-    v.setUint8(o + 1, STANCE_LIST.indexOf(e.stance) | (AI_STATES.indexOf(e.state) << 2) | (e.dead ? 16 : 0));
+    v.setUint8(o + 1, STANCE_LIST.indexOf(e.stance) | (AI_STATES.indexOf(e.state) << 2) | (e.dead ? 16 : 0) | (e.locked ? 32 : 0));
     v.setInt16(o + 2, Math.round(e.pitch * 1000), true);
     v.setFloat32(o + 4, e.pos.x, true);
     v.setFloat32(o + 8, e.pos.y, true);
@@ -138,6 +138,7 @@ export function decodeEnemies(data: ArrayBuffer | Uint8Array): EnemyView[] | nul
       stance: STANCE_LIST[flags & 3] ?? 'stand',
       state: AI_STATES[(flags >> 2) & 3],
       dead: (flags & 16) !== 0,
+      locked: (flags & 32) !== 0,
       pitch: v.getInt16(o + 2, true) / 1000,
       pos: { x: v.getFloat32(o + 4, true), y: v.getFloat32(o + 8, true), z: v.getFloat32(o + 12, true) },
       yaw: v.getFloat32(o + 16, true),

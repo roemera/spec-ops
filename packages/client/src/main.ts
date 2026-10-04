@@ -10,6 +10,7 @@ import { Pipeline } from './render/pipeline';
 import { PAL } from './render/palette';
 import { World } from './world';
 import { Snowfall } from './render/snow';
+import { Lasers } from './render/lasers';
 import { PlayerSim, type MoveInput } from './sim/player';
 import { Rifle } from './sim/rifle';
 import { Bullets, type Bullet, type SoldierHit } from './sim/bullets';
@@ -123,6 +124,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   const windSound = audio.loop('wind', new THREE.Vector3());
   const remotes = new Remotes(world.scene, audio);
   const enemies = new Enemies(world.scene, audio, fx);
+  const lasers = new Lasers(world.scene, physics);
   let phase: Phase = welcome.phase;
   const playing = () => phase === 'live';
 
@@ -587,6 +589,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     const w = wind();
     world.update(dt, w);
     snow.update(dt, camera, w, viewCanvas.height);
+    lasers.update(enemies.lasers(), camera, viewCanvas.width, viewCanvas.height);
     const windSpeed = Math.hypot(w.x, w.z);
     windSound.setPosition(camera.position.clone().add(new THREE.Vector3(-w.x, 0.3 * windSpeed, -w.z).normalize().multiplyScalar(20)));
     windSound.setVolume(0.15 + Math.min(0.9, windSpeed * 0.1));

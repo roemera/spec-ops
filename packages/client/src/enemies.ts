@@ -4,13 +4,13 @@ import { buildSoldier, type SoldierModel } from './models/soldier';
 import { PAL } from './render/palette';
 import type { Audio } from './audio';
 import type { Fx } from './fx';
+import type { LaserSource } from './render/lasers';
 
 // The enemy, as the server reports it (AI_HZ): drawn a little in the past and smoothed between
 // updates. Their state is never shown on screen; you hear it: a "huh?" when one gets suspicious,
 // a shout when one spots you.
 
 const DELAY = 1.5 / AI_HZ; // s behind the newest update, so there are always two to blend
-const STRIDE = 0.75;
 
 interface Snap {
   t: number;
@@ -25,9 +25,9 @@ export interface Enemy {
   snaps: Snap[];
   stance: Stance;
   state: AiState;
+  locked: boolean; // aimed in on someone: the laser holds steady
   dead: boolean;
   walked: number;
-  nextStep: number;
   speed: number;
 }
 
@@ -47,6 +47,7 @@ export class Enemies {
       if (e.dead) continue;
       if (v.state !== e.state) this.changed(e, v.state);
       e.stance = v.stance;
+      e.locked = v.locked;
       e.snaps.push({ t: now, pos: new THREE.Vector3(v.pos.x, v.pos.y, v.pos.z), yaw: v.yaw, pitch: v.pitch });
       if (e.snaps.length > 20) e.snaps.shift();
     }
@@ -63,7 +64,7 @@ export class Enemies {
     model.root.position.set(v.pos.x, v.pos.y, v.pos.z);
     model.root.rotation.y = v.yaw;
     this.scene.add(model.root);
-    const e: Enemy = { id: v.id, model, snaps: [], stance: v.stance, state: v.state, dead: false, walked: 0, nextStep: STRIDE, speed: 0 };
+    const e: Enemy = { id: v.id, model, snaps: [], stance: v.stance, state: v.state, locked: false, dead: false, walked: 0, speed: 0 };
     this.byId.set(v.id, e);
     return e;
   }
@@ -84,6 +85,14 @@ export class Enemies {
     e.model.root.visible = false;
     this.fx.shatter(e.model.parts, dir, PAL.enemy);
     this.audio.play('shatter', { pos: e.model.root.position.clone().setY(e.model.root.position.y + 1) });
+  }
+
+  /** Every living enemy's laser: where its rifle is and which way it points. */
+  *lasers(): Iterable<LaserSource> {
+    for (const e of this.byId.values()) {
+      if (e.dead || e.snaps.length === 0) continue;
+      yield { muzzle: e.model.muzzle, aim: e.model.aim, state: e.state, locked: e.locked };
+    }
   }
 
   /** Which living enemy (and body part) a bullet step from `origin` along `dir` hits first. */
@@ -126,10 +135,8 @@ export class Enemies {
       if (moved < 3) e.walked += moved;
       root.position.copy(pos);
       root.rotation.y = yaw;
-      e.model.pose(e.stance, pitch, (e.walked / STRIDE) * Math.PI, Math.min(1, e.speed / 1.5), dt);
-      // Footsteps: their boots in the snow, so you can hear a patrol coming.
-      if (e.walked >= e.nextStep) {
-        e.nextStep = e.walked + STRIDE;
+      // Footsteps when a foot comes down: their boots in the snow, so you can hear a patrol coming.
+      if (e.model.pose(e.stance, pitch, e.walked, e.speed, dt)) {
         const volume = e.speed > 2.5 ? 1.1 : 0.7;
         this.audio.play('step', { pos: pos.clone().setY(pos.y + STANCES[e.stance].height * 0.1), volume, rate: 0.85 + Math.random() * 0.2 });
       }

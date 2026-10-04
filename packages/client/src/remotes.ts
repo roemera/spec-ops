@@ -17,7 +17,6 @@ interface Snap {
 }
 
 const MAX_EXTRAPOLATE = 0.25; // s: keep moving someone whose updates stopped, but not for long
-const STRIDE = 0.75; // m per footstep (and per half walk cycle)
 
 export interface Remote {
   id: number;
@@ -25,8 +24,7 @@ export interface Remote {
   snaps: Snap[];
   life: Life;
   stance: Stance;
-  walked: number; // m, drives footsteps and the walk cycle
-  nextStep: number;
+  walked: number; // m, drives the walk cycle (and its footsteps)
 }
 
 export class Remotes {
@@ -45,7 +43,7 @@ export class Remotes {
     const model = buildSoldier(PAL.friend);
     model.root.position.set(...s.pos);
     this.scene.add(model.root);
-    const r: Remote = { id: s.id, model, snaps: [], life: 'up', stance: s.stance, walked: 0, nextStep: STRIDE };
+    const r: Remote = { id: s.id, model, snaps: [], life: 'up', stance: s.stance, walked: 0 };
     this.byId.set(s.id, r);
     return r;
   }
@@ -95,10 +93,8 @@ export class Remotes {
       r.model.root.rotation.y = yaw;
       r.model.root.rotation.z = r.life === 'down' ? 0.9 : 0; // down: rolled onto one side
       const speed = Math.hypot(newest.vel.x, newest.vel.z);
-      r.model.pose(r.stance, pitch, (r.walked / STRIDE) * Math.PI, Math.min(1, speed / 2), dt);
-      // Footsteps: quieter crouched, almost silent prone.
-      if (r.walked >= r.nextStep) {
-        r.nextStep = r.walked + STRIDE;
+      // Footsteps when a foot comes down: quieter crouched, almost silent prone.
+      if (r.model.pose(r.stance, pitch, r.walked, speed, dt)) {
         const volume = r.stance === 'stand' ? (speed > 4 ? 1.2 : 0.8) : r.stance === 'crouch' ? 0.35 : 0.12;
         this.audio.play('step', { pos: pos.clone().setY(pos.y + STANCES[r.stance].height * 0.1), volume, rate: 0.9 + Math.random() * 0.2 });
       }

@@ -78,16 +78,22 @@ a new map. Each page reloads itself to build the new map and rejoins on its own.
 
 ## The enemy
 
-The server runs the enemy soldiers (`packages/shared/src/ai.ts`, tuning in `constants.ts`): guards
-at every outpost (one up the watchtower if there is one), a patrol round each outpost, and roamers
-walking the route. Each one goes from patrolling to suspicious (stops, turns your way, then walks
+The server runs the enemy soldiers (`packages/shared/src/ai.ts`, tuning in `constants.ts`), usually
+30 to 40 of them: three to five guards at every outpost (almost always one up the watchtower), one or
+two patrols round each outpost, roamers walking the route, and sentry pairs posted beside it watching
+back the way you come. Each one goes from patrolling to suspicious (stops, turns your way, then walks
 over), to searching (goes where you were and looks around), to alert (shouts so the ones near come
 too, takes a knee and shoots, and runs to where it last saw you if you break line of sight).
 
 They see you sooner close up, standing, moving and in front of them, and much later prone, still,
 far away, at the edge of their view or behind pine branches. They hear footsteps (sprinting most)
 and every rifle shot within 260 m, and anyone who sees a friend go down comes looking. Their aim
-gets better the longer they keep you in sight. You hear them: a "huh?" when one gets suspicious, a
+gets better the longer they keep you in sight, and two body hits put you down.
+
+Every enemy rifle has a **laser sight**, so you can see where each one is looking: faint while they
+patrol, sweeping back and forth while they are suspicious or searching, deep red once alert. While
+they aim at you the laser wavers and then holds steady: a steady laser means the next shot will
+probably hit. A laser pointed straight at your eyes shows as a red glare at its rifle. You hear them: a "huh?" when one gets suspicious, a
 shout when one spots you, and their boots in the snow. Health comes back 5 s after the last hit.
 
 URL options: `?join=host:port&name=X&password=Y` joins directly, `?test` hides the click-to-play
@@ -131,7 +137,7 @@ packages/
   client/   main.ts (loop: input, scope, breath, recoil, camera), sim/player.ts (character controller,
             stances), sim/rifle.ts (magazine, bolt, reload), sim/bullets.ts (ballistics),
             models/ (soldier, rifle), render/ (pipeline, palette, snow), world.ts (terrain, instanced
-            forest, objects, light, smoke), enemies.ts (the server's enemy, drawn and heard), remotes.ts (other players, interpolated), fx.ts (trails,
+            forest, objects, light, smoke), render/lasers.ts (enemy laser sights), enemies.ts (the server's enemy, drawn and heard), remotes.ts (other players, interpolated), fx.ts (trails,
             puffs, shatter), audio.ts, net.ts, ui/hud.ts, ui/menu.ts
 ```
 
