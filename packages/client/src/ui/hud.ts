@@ -10,6 +10,7 @@ export const HUD_COLORS = {
   red: '#e3221a',
   white: '#ffffff',
   paper: 'rgba(245,247,249,0.92)',
+  signal: '#ff7a1a', // the objective
 } as const;
 const C = HUD_COLORS;
 
@@ -66,7 +67,12 @@ export class Hud {
     ctx.textBaseline = 'middle';
     ctx.letterSpacing = `${Math.round(size * 0.08)}px`;
     ctx.fillStyle = color;
+    // A soft halo in the opposite tone keeps text readable over both snow and dark pines.
+    const dark = color === C.ink || color === C.inkSoft || color === '#000';
+    ctx.shadowColor = dark ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.45)';
+    ctx.shadowBlur = 4;
     ctx.fillText(s, x, y);
+    ctx.shadowBlur = 0;
   }
 
   draw(s: HudState) {

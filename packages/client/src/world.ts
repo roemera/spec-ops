@@ -1,15 +1,32 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { FOG_FAR, FOG_NEAR, SHADOW_RANGE, type GameMap, type MapObject, makeRng } from '@spec-ops/shared';
-import { PAL, flat } from './render/palette';
+import { FOG_FAR, FOG_NEAR, SHADOW_RANGE, SURFACE, type GameMap, type MapObject, makeRng } from '@spec-ops/shared';
+import { PAL, flatShared } from './render/palette';
 
 const SUN_DIR = new THREE.Vector3(0.45, 0.8, 0.3).normalize();
 const SHADOW_MAP = 2048;
+const CHUNK = 80; // m: trees are instanced per square of this size, so off-screen squares are skipped
+const SMOKE_PUFFS = 24;
+const SMOKE_RISE = 4.5; // m/s: a column about 70 m tall, over the treetops from across the valley
+const SMOKE_LIFE = 15; // s per puff
+
+// Unit shapes, base at y = 0, scaled per instance.
+const TRUNK = new THREE.CylinderGeometry(0.6, 1, 1, 6).translate(0, 0.5, 0);
+const CONE = new THREE.ConeGeometry(1, 1, 7).translate(0, 0.5, 0);
+const PUFF = new THREE.IcosahedronGeometry(1, 1);
+
+interface TreeChunk {
+  trunks: THREE.Matrix4[];
+  cones: THREE.Matrix4[];
+}
 
 /** Builds the generated map into a Three.js scene and a Rapier world. */
 export class World {
   readonly scene = new THREE.Scene();
   private sun: THREE.DirectionalLight;
+  private chunks = new Map<string, TreeChunk>();
+  private smoke: Array<{ mesh: THREE.Mesh; mat: THREE.MeshLambertMaterial; age: number }> = [];
+  private smokeBase = new THREE.Vector3();
 
   constructor(readonly map: GameMap, readonly physics: RAPIER.World) {
     this.scene.background = new THREE.Color(PAL.horizon);
@@ -33,6 +50,7 @@ export class World {
     this.buildTerrain();
     this.buildBounds();
     for (const o of map.objects) this.buildObject(o);
+    this.buildTrees();
   }
 
   /** A big dome with a vertical gradient: pale at the horizon (where the fog is), bluer overhead. */
@@ -53,28 +71,41 @@ export class World {
     this.scene.add(sky);
   }
 
+  /** One colour per triangle: snow, bare rock where it's steep, ice on the creek. */
   private buildTerrain() {
-    const { cells, size, heights } = this.map;
+    const { cells, size, heights, surface } = this.map;
     const n = cells + 1, step = size / cells, half = size / 2;
-    const pos = new Float32Array(n * n * 3);
-    for (let iz = 0; iz < n; iz++) {
-      for (let ix = 0; ix < n; ix++) {
-        const i = iz * n + ix;
-        pos.set([-half + ix * step, heights[i], -half + iz * step], i * 3);
+    const pos = new Float32Array(cells * cells * 6 * 3), col = new Float32Array(cells * cells * 6 * 3);
+    const colors = { snow: new THREE.Color(PAL.snow), rock: new THREE.Color(PAL.cliff), ice: new THREE.Color(PAL.ice) };
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const ab = new THREE.Vector3(), ac = new THREE.Vector3();
+    const vtx = (i: number, out: THREE.Vector3) => out.set(-half + (i % n) * step, heights[i], -half + Math.floor(i / n) * step);
+    let k = 0;
+    const tri = (i0: number, i1: number, i2: number) => {
+      vtx(i0, a);
+      vtx(i1, b);
+      vtx(i2, c);
+      const ny = Math.abs(ab.subVectors(b, a).cross(ac.subVectors(c, a)).normalize().y);
+      const ice = [i0, i1, i2].filter((i) => surface[i] === SURFACE.ice).length >= 2;
+      const color = ice ? colors.ice : ny < 0.8 ? colors.rock : colors.snow;
+      for (const v of [a, b, c]) {
+        pos.set([v.x, v.y, v.z], k * 3);
+        col.set([color.r, color.g, color.b], k * 3);
+        k++;
       }
-    }
-    const index: number[] = [];
+    };
     for (let iz = 0; iz < cells; iz++) {
       for (let ix = 0; ix < cells; ix++) {
-        const a = iz * n + ix, b = a + 1, c = a + n, d = c + 1;
-        index.push(a, c, b, b, c, d);
+        const i = iz * n + ix;
+        tri(i, i + n, i + 1);
+        tri(i + 1, i + n, i + n + 1);
       }
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setIndex(index);
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.computeVertexNormals();
-    const ground = new THREE.Mesh(geo, flat(PAL.snow));
+    const ground = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
     ground.receiveShadow = true;
     this.scene.add(ground);
 
@@ -94,23 +125,34 @@ export class World {
       [-half, 0, 2, half],
       [half, 0, 2, half],
     ]) {
-      this.physics.createCollider(RAPIER.ColliderDesc.cuboid(hx, 200, hz).setTranslation(x, 0, z));
+      this.physics.createCollider(RAPIER.ColliderDesc.cuboid(hx, 300, hz).setTranslation(x, 0, z));
     }
+  }
+
+  /** A fixed collider, placed in the object's frame (local offset, turned with the object). */
+  private solid(o: MapObject, desc: RAPIER.ColliderDesc, local = new THREE.Vector3(), extra?: THREE.Quaternion) {
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), o.rotY);
+    const p = local.clone().applyQuaternion(q).add(new THREE.Vector3(o.x, o.y, o.z));
+    if (extra) q.multiply(extra);
+    this.physics.createCollider(desc.setTranslation(p.x, p.y, p.z).setRotation(q));
   }
 
   private buildObject(o: MapObject) {
     const [w, h, d] = o.size;
+    if (o.kind === 'tree' || o.kind === 'deadTree') return this.addTree(o);
     const group = new THREE.Group();
     group.position.set(o.x, o.y, o.z);
     group.rotation.y = o.rotY;
-    const rot = new THREE.Quaternion().setFromEuler(group.rotation);
-    let desc: RAPIER.ColliderDesc;
-    const mesh = (geo: THREE.BufferGeometry, color: number, y: number) => {
-      const m = new THREE.Mesh(geo, flat(color));
-      m.position.y = y;
+    const mesh = (geo: THREE.BufferGeometry, color: number, x: number, y: number, z: number) => {
+      const m = new THREE.Mesh(geo, flatShared(color));
+      m.position.set(x, y, z);
       m.castShadow = m.receiveShadow = true;
       group.add(m);
       return m;
+    };
+    const box = (bw: number, bh: number, bd: number, color: number, x: number, y: number, z: number, collide = true) => {
+      mesh(new THREE.BoxGeometry(bw, bh, bd), color, x, y, z);
+      if (collide) this.solid(o, RAPIER.ColliderDesc.cuboid(bw / 2, bh / 2, bd / 2), new THREE.Vector3(x, y, z));
     };
 
     switch (o.kind) {
@@ -121,54 +163,118 @@ export class World {
         for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i) * rng.range(0.7, 1.2), p.getY(i) * rng.range(0.7, 1.2), p.getZ(i) * rng.range(0.7, 1.2));
         geo.scale(w / 2, h / 2, d / 2);
         geo.computeVertexNormals();
-        mesh(geo, PAL.rock, h * 0.25); // half buried
-        desc = RAPIER.ColliderDesc.convexHull(geo.attributes.position.array as Float32Array)!.setTranslation(o.x, o.y + h * 0.25, o.z);
+        mesh(geo, PAL.rock, 0, h * 0.25, 0); // half buried
+        this.solid(o, RAPIER.ColliderDesc.convexHull(geo.attributes.position.array as Float32Array)!, new THREE.Vector3(0, h * 0.25, 0));
         break;
       }
-      case 'building': {
-        mesh(new THREE.BoxGeometry(w, h, d), PAL.wall, h / 2);
+      case 'log': {
+        // Lying along local x, a little sunk into the snow.
+        const r = h / 2;
+        mesh(new THREE.CylinderGeometry(r, r * 1.1, w, 7).rotateZ(Math.PI / 2), PAL.trunk, 0, r * 0.8, 0);
+        const lying = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+        this.solid(o, RAPIER.ColliderDesc.cylinder(w / 2, r), new THREE.Vector3(0, r * 0.8, 0), lying);
+        break;
+      }
+      case 'cabin': {
+        box(w, h, d, PAL.wall, 0, h / 2, 0);
         // Pitched roof: a stretched triangular prism, dark so it reads against the snow.
-        const roof = new THREE.CylinderGeometry(1, 1, d + 1, 3, 1);
-        roof.rotateX(-Math.PI / 2); // apex up
-        roof.scale((w + 1) / 1.73, h * 0.35, 1);
-        mesh(roof, PAL.roof, h + h * 0.17);
-        desc = RAPIER.ColliderDesc.cuboid(w / 2, h / 2, d / 2).setTranslation(o.x, o.y + h / 2, o.z);
+        const roof = new THREE.CylinderGeometry(1, 1, d + 0.8, 3, 1).rotateX(-Math.PI / 2); // apex up
+        roof.scale((w + 0.8) / 1.73, h * 0.45, 1);
+        mesh(roof, PAL.roof, 0, h + h * 0.22, 0);
+        box(1.1, 2.1, 0.1, PAL.roof, w * 0.2, 1.05, -d / 2 - 0.05, false); // door
+        for (const sx of [-1, 1]) box(0.1, 0.9, 1.2, PAL.roof, (sx * w) / 2 + sx * 0.05, h * 0.6, 0, false); // windows
         break;
       }
-      case 'silo': {
-        mesh(new THREE.CylinderGeometry(w / 2, w / 2, h, 10), PAL.wall, h / 2);
-        mesh(new THREE.ConeGeometry(w / 2 + 0.4, 3, 10), PAL.roof, h + 1.5);
-        desc = RAPIER.ColliderDesc.cylinder(h / 2, w / 2).setTranslation(o.x, o.y + h / 2, o.z);
-        break;
-      }
-      case 'tree': {
-        // Pine: a dark trunk and three stacked cones.
-        mesh(new THREE.CylinderGeometry(0.18, 0.3, h * 0.35, 6), PAL.trunk, h * 0.175);
-        for (let i = 0; i < 3; i++) {
-          const r = w * (1 - i * 0.25), ch = h * 0.42;
-          mesh(new THREE.ConeGeometry(r, ch, 7), PAL.pine, h * (0.35 + i * 0.2) + ch / 2 - h * 0.05);
+      case 'tower': {
+        // Four legs, a platform with a low rail, a little roof on posts.
+        const leg = w / 2 - 0.2;
+        for (const [lx, lz] of [[-leg, -leg], [leg, -leg], [-leg, leg], [leg, leg]]) {
+          box(0.25, h, 0.25, PAL.fence, lx, h / 2, lz);
+          box(0.15, 2.2, 0.15, PAL.fence, lx, h + 1.1, lz, false);
         }
-        desc = RAPIER.ColliderDesc.cylinder(h / 2, 0.35).setTranslation(o.x, o.y + h / 2, o.z);
-        break;
-      }
-      case 'fence': {
-        const rail = new THREE.BoxGeometry(w, 0.12, d);
-        mesh(rail, PAL.fence, h * 0.8);
-        mesh(rail, PAL.fence, h * 0.4);
-        const post = mesh(new THREE.BoxGeometry(0.16, h, 0.16), PAL.fence, h / 2);
-        post.position.x = -w / 2;
-        desc = RAPIER.ColliderDesc.cuboid(w / 2, h / 2, 0.1).setTranslation(o.x, o.y + h / 2, o.z);
+        box(w, 0.3, w, PAL.fence, 0, h, 0);
+        for (const s of [-1, 1]) {
+          box(w, 1, 0.1, PAL.wall, 0, h + 0.65, (s * w) / 2);
+          box(0.1, 1, w, PAL.wall, (s * w) / 2, h + 0.65, 0);
+        }
+        mesh(new THREE.ConeGeometry(w * 0.8, 1.4, 4).rotateY(Math.PI / 4), PAL.roof, 0, h + 2.9, 0);
         break;
       }
       case 'wall': {
-        mesh(new THREE.BoxGeometry(w, h, d), PAL.wall, h / 2);
-        desc = RAPIER.ColliderDesc.cuboid(w / 2, h / 2, d / 2).setTranslation(o.x, o.y + h / 2, o.z);
+        // Sandbags: a row of fat rounded bags with a second row on top, offset by half a bag.
+        const bags = Math.max(2, Math.round(w / 0.7)), bw = w / bags, r = h * 0.22;
+        const bag = new THREE.CapsuleGeometry(r, Math.max(0.05, bw - r * 2), 2, 6).rotateZ(Math.PI / 2).scale(1, 1, d / (r * 2));
+        for (let i = 0; i < bags; i++) mesh(bag, PAL.wall, -w / 2 + bw * (i + 0.5), r, 0);
+        for (let i = 0; i < bags - 1; i++) mesh(bag, PAL.wall, -w / 2 + bw * (i + 1), r * 3, 0);
+        this.solid(o, RAPIER.ColliderDesc.cuboid(w / 2, h / 2, d / 2), new THREE.Vector3(0, h / 2, 0));
+        break;
+      }
+      case 'pad': {
+        // Extraction: a dark landing pad with a white H, and orange smoke rising off it.
+        box(w, h, d, PAL.roof, 0, h / 2, 0);
+        box(0.8, 0.05, 4.5, PAL.snow, -1.4, h + 0.02, 0, false);
+        box(0.8, 0.05, 4.5, PAL.snow, 1.4, h + 0.02, 0, false);
+        box(2.0, 0.05, 0.8, PAL.snow, 0, h + 0.02, 0, false);
+        box(0.3, 0.5, 0.3, PAL.gun, w / 2 - 1, h + 0.25, d / 2 - 1, false); // the smoke grenade
+        this.smokeBase.set(w / 2 - 1, h + 0.5, d / 2 - 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), o.rotY).add(new THREE.Vector3(o.x, o.y, o.z));
+        for (let i = 0; i < SMOKE_PUFFS; i++) {
+          // No fog on the smoke: it is how you find the pad from across the valley.
+          const mat = new THREE.MeshLambertMaterial({ color: PAL.signal, flatShading: true, transparent: true, depthWrite: false, fog: false });
+          const m = new THREE.Mesh(PUFF, mat);
+          this.scene.add(m);
+          this.smoke.push({ mesh: m, mat, age: (i / SMOKE_PUFFS) * SMOKE_LIFE });
+        }
         break;
       }
     }
-    desc.setRotation(rot);
-    this.physics.createCollider(desc);
     this.scene.add(group);
+  }
+
+  /** Trees go into per-chunk instance lists (drawn in buildTrees); their colliders are made now. */
+  private addTree(o: MapObject) {
+    const [w, h] = o.size;
+    const key = `${Math.floor(o.x / CHUNK)},${Math.floor(o.z / CHUNK)}`;
+    let chunk = this.chunks.get(key);
+    if (!chunk) this.chunks.set(key, (chunk = { trunks: [], cones: [] }));
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), o.rotY);
+    const m = (y: number, sxz: number, sy: number) =>
+      new THREE.Matrix4().compose(new THREE.Vector3(o.x, o.y + y, o.z), q, new THREE.Vector3(sxz, sy, sxz));
+    if (o.kind === 'deadTree') {
+      chunk.trunks.push(m(-0.3, 0.22, h + 0.3));
+      this.physics.createCollider(RAPIER.ColliderDesc.cylinder(h / 2, 0.25).setTranslation(o.x, o.y + h / 2, o.z));
+      return;
+    }
+    // Bare trunk up to about a third of the height: you can see (and shoot) under the branches.
+    chunk.trunks.push(m(-0.3, 0.28, h * 0.45 + 0.3)); // sunk a little so slopes don't show a gap
+    for (let i = 0; i < 3; i++) chunk.cones.push(m(h * (0.36 + i * 0.19), w * (1 - i * 0.27), h * 0.4));
+    this.physics.createCollider(RAPIER.ColliderDesc.cylinder(h / 2, 0.35).setTranslation(o.x, o.y + h / 2, o.z));
+  }
+
+  private buildTrees() {
+    const add = (geo: THREE.BufferGeometry, color: number, list: THREE.Matrix4[]) => {
+      if (!list.length) return;
+      const im = new THREE.InstancedMesh(geo, flatShared(color), list.length);
+      list.forEach((mat, i) => im.setMatrixAt(i, mat));
+      im.castShadow = im.receiveShadow = true;
+      im.computeBoundingSphere();
+      this.scene.add(im);
+    };
+    for (const c of this.chunks.values()) {
+      add(TRUNK, PAL.trunk, c.trunks);
+      add(CONE, PAL.pine, c.cones);
+    }
+  }
+
+  update(dt: number) {
+    for (const s of this.smoke) {
+      s.age = (s.age + dt) % SMOKE_LIFE;
+      const k = s.age / SMOKE_LIFE;
+      // Rises, swells and leans downwind as it thins out.
+      s.mesh.position.copy(this.smokeBase).add(new THREE.Vector3(k * k * 24, s.age * SMOKE_RISE, k * k * 8));
+      s.mesh.scale.setScalar(0.6 + k * 7);
+      s.mesh.rotation.set(s.age * 0.3, s.age * 0.2, 0);
+      s.mat.opacity = 0.85 * Math.min(1, s.age * 3) * (1 - k);
+    }
   }
 
   /** Keep the sharp-shadow area centred on the viewer, snapped to shadow texels so edges don't crawl. */

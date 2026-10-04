@@ -4,13 +4,13 @@ import { DEFAULT_PORT } from '@spec-ops/shared';
 export interface Config {
   port: number;
   password: string; // empty = no password
-  mapSeed: number;
+  mapSeed: number; // 0 = a new random map each time the server starts
   killLimit: number;
 }
 
 /** server.config.json at the repo root, falling back to server.config.example.json; env vars win. */
 export function loadConfig(root: string): Config {
-  const defaults: Config = { port: DEFAULT_PORT, password: '', mapSeed: 1337, killLimit: 10 };
+  const defaults: Config = { port: DEFAULT_PORT, password: '', mapSeed: 0, killLimit: 10 };
   let file: Partial<Config> = {};
   for (const name of ['server.config.json', 'server.config.example.json']) {
     const path = `${root}/${name}`;
@@ -21,7 +21,7 @@ export function loadConfig(root: string): Config {
     }
   }
   const env = process.env;
-  return {
+  const config: Config = {
     ...defaults,
     ...file,
     ...(env.PORT ? { port: Number(env.PORT) } : {}),
@@ -29,4 +29,6 @@ export function loadConfig(root: string): Config {
     ...(env.MAP_SEED ? { mapSeed: Number(env.MAP_SEED) } : {}),
     ...(env.KILL_LIMIT ? { killLimit: Number(env.KILL_LIMIT) } : {}),
   };
+  if (!config.mapSeed) config.mapSeed = 1 + Math.floor(Math.random() * 999999);
+  return config;
 }

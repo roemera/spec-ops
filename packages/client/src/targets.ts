@@ -1,11 +1,10 @@
 import * as THREE from 'three';
-import RAPIER from '@dimforge/rapier3d-compat';
-import { Health, MAP_SIZE, RESPAWN_DELAY, type GameMap, type HitZone, type Spawn, type Stance } from '@spec-ops/shared';
+import { Health, RESPAWN_DELAY, makeRng, type GameMap, type HitZone, type Stance } from '@spec-ops/shared';
 import { buildSoldier, type SoldierModel } from './models/soldier';
 import { PAL } from './render/palette';
 
-// Practice range (offline): red soldiers at increasing range ahead of the spawn, in every stance.
-// One walks back and forth. Stand-ins for the AI to come.
+// Practice (offline): red soldiers posted at the map's outposts, one patrolling each, sometimes one
+// up the watchtower. They don't fight back yet: stand-ins for the AI to come.
 
 const PATROL_SPEED = 1.4; // m/s
 const PATROL_LENGTH = 14; // m
@@ -16,7 +15,7 @@ export interface Target {
   stance: Stance;
   home: THREE.Vector3;
   yaw: number;
-  patrol: THREE.Vector3 | null; // unit direction it walks along, or null if it stands still
+  patrol: THREE.Vector3 | null; // unit direction it walks along, or null if it stays put
   walked: number;
   deadFor: number; // >0 while dead, counting down to respawn
 }
@@ -25,47 +24,36 @@ export class Targets {
   readonly list: Target[] = [];
   private time = 0;
 
-  constructor(private scene: THREE.Scene, private map: GameMap, private physics: RAPIER.World, from: Spawn) {
-    const fwd = new THREE.Vector2(-Math.sin(from.rotY), -Math.cos(from.rotY));
-    const right = new THREE.Vector2(-fwd.y, fwd.x);
-    const placements: Array<[number, number, Stance, boolean]> = [
-      [45, -6, 'stand', false], // range m, sideways m, stance, patrols
-      [90, 10, 'stand', true],
-      [140, -14, 'crouch', false],
-      [200, 8, 'prone', false],
-      [260, -20, 'stand', false],
-    ];
-    physics.step(); // ray casts only see colliders once the world has stepped
-    const eyeY = map.heightAt(from.x, from.z) + 1.65;
-    const lim = MAP_SIZE / 2 - 30; // stay inside the rim
-    for (const [range, side, stance, patrols] of placements) {
-      // Slide sideways until the spawn can see it past the terrain, trees and walls.
-      let best = { x: 0, z: 0 };
-      for (const shift of [0, 6, -6, 12, -12, 20, -20, 30, -30, 45, -45]) {
-        const x = Math.max(-lim, Math.min(lim, from.x + fwd.x * range + right.x * (side + shift)));
-        const z = Math.max(-lim, Math.min(lim, from.z + fwd.y * range + right.y * (side + shift)));
-        best = { x, z };
-        if (this.visible(from.x, eyeY, from.z, x, map.heightAt(x, z) + (stance === 'prone' ? 0.3 : 1), z)) break;
+  constructor(private scene: THREE.Scene, private map: GameMap) {
+    const rng = makeRng(map.seed + 7);
+    const solids = map.objects.filter((o) => o.kind === 'cabin' || o.kind === 'tower' || o.kind === 'wall');
+    const blocked = (x: number, z: number) => solids.some((o) => Math.hypot(o.x - x, o.z - z) < Math.max(o.size[0], o.size[2]) / 2 + 1);
+    const start = map.start;
+    for (const post of map.outposts) {
+      const facing = Math.atan2(-(start.x - post.x), -(start.z - post.z)); // toward where you come from
+      // Someone up the tower, if there is one.
+      const tower = solids.find((o) => o.kind === 'tower' && Math.hypot(o.x - post.x, o.z - post.z) < post.r + 2);
+      if (tower && rng.next() < 0.7) this.add(new THREE.Vector3(tower.x, tower.y + tower.size[1] + 0.15, tower.z), facing + rng.range(-0.6, 0.6), 'stand', null);
+      // Guards on the ground.
+      for (let i = 0, made = 0, want = rng.int(2, 3); i < 20 && made < want; i++) {
+        const a = rng.range(0, Math.PI * 2), d = rng.range(2, post.r * 0.75);
+        const x = post.x + Math.cos(a) * d, z = post.z + Math.sin(a) * d;
+        const stance: Stance = rng.next() < 0.25 ? 'crouch' : 'stand', turn = rng.range(-1, 1);
+        if (blocked(x, z)) continue;
+        this.add(new THREE.Vector3(x, map.heightAt(x, z), z), facing + turn, stance, null);
+        made++;
       }
-      const home = new THREE.Vector3(best.x, map.heightAt(best.x, best.z), best.z);
-      const yaw = Math.atan2(-(from.x - best.x), -(from.z - best.z)); // face the spawn
-      const model = buildSoldier(PAL.enemy);
-      this.scene.add(model.root);
-      this.list.push({
-        model, health: new Health(), stance, home, yaw,
-        patrol: patrols ? new THREE.Vector3(right.x, 0, right.y) : null,
-        walked: 0, deadFor: 0,
-      });
+      // A patrol across the clearing.
+      const a = rng.range(0, Math.PI);
+      this.add(new THREE.Vector3(post.x, map.heightAt(post.x, post.z), post.z), 0, 'stand', new THREE.Vector3(Math.cos(a), 0, Math.sin(a)));
     }
     this.update(1); // settle into pose
   }
 
-  /** Clear line of sight: nothing solid (ground, trees, walls) between the two points. */
-  private visible(ax: number, ay: number, az: number, bx: number, by: number, bz: number) {
-    const dir = { x: bx - ax, y: by - ay, z: bz - az };
-    const len = Math.hypot(dir.x, dir.y, dir.z);
-    const ray = new RAPIER.Ray({ x: ax, y: ay, z: az }, { x: dir.x / len, y: dir.y / len, z: dir.z / len });
-    return !this.physics.castRay(ray, len - 0.5, true, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS);
+  private add(home: THREE.Vector3, yaw: number, stance: Stance, patrol: THREE.Vector3 | null) {
+    const model = buildSoldier(PAL.enemy);
+    this.scene.add(model.root);
+    this.list.push({ model, health: new Health(), stance, home, yaw, patrol, walked: 0, deadFor: 0 });
   }
 
   /** Which living target (and body part) a bullet step hits first. */
@@ -101,13 +89,12 @@ export class Targets {
         const leg = t.walked % (PATROL_LENGTH * 2), out = leg < PATROL_LENGTH;
         const along = out ? leg : PATROL_LENGTH * 2 - leg;
         p.addScaledVector(t.patrol, along - PATROL_LENGTH / 2);
+        p.y = this.map.heightAt(p.x, p.z);
         const dir = out ? t.patrol : t.patrol.clone().negate();
         yaw = Math.atan2(-dir.x, -dir.z);
         amount = 1;
-      }
-      p.y = this.map.heightAt(p.x, p.z);
+      } else yaw += Math.sin(this.time * 0.25 + p.z) * 0.5; // a slow look around so they don't read as statues
       t.model.root.rotation.y = yaw;
-      // Idle: a slow look around so they don't read as statues.
       const pitch = t.patrol ? 0 : Math.sin(this.time * 0.4 + p.x) * 0.08;
       t.model.pose(t.stance, pitch, (t.walked / 0.75) * Math.PI, amount, dt);
       t.model.root.updateMatrixWorld(true);

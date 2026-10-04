@@ -31,6 +31,8 @@ const BASE_FOV = 70; // deg vertical
 const ADS_FOV = 55; // deg while raising the scope, before it snaps to the scope view
 const MOUSE_SENS = 0.0022; // rad per pixel at BASE_FOV; scales with fov so the scope isn't twitchy
 const MESSAGE_TIME = 2.5; // s
+const BRIEFING_TIME = 7; // s the extraction bearing shows after spawning
+const EXTRACT_RADIUS = 6; // m from the pad's centre counts as extracted
 const STRIDE = 0.75; // m per footstep
 const STANCE_STEADY: Record<Stance, number> = { stand: 1, crouch: 0.6, prone: 0.25 }; // sway and spread
 const ZERO_RANGE = 100; // m: the scope is zeroed here (bullets cross the crosshair at this range)
@@ -56,7 +58,8 @@ async function start() {
         : await menu.join(error);
     if (choice.mode === 'offline') {
       menu.hide();
-      return runGame(menu, Number(params.get('seed') ?? 1337), null, null);
+      // A new map every time, unless ?seed= asks for one.
+      return runGame(menu, Number(params.get('seed')) || 1 + Math.floor(Math.random() * 999999), null, null);
     }
     try {
       const { net, welcome } = await Net.connect(choice.server, choice.name, choice.password);
@@ -66,6 +69,12 @@ async function start() {
       if (params.has('join')) params.delete('join'); // fall back to the menu
     }
   }
+}
+
+/** Eight-way compass name for a direction on the map (north is -z). */
+function bearingName(x: number, z: number) {
+  const deg = ((Math.atan2(x, -z) * 180) / Math.PI + 360) % 360;
+  return ['NORTH', 'NORTHEAST', 'EAST', 'SOUTHEAST', 'SOUTH', 'SOUTHWEST', 'WEST', 'NORTHWEST'][Math.round(deg / 45) % 8];
 }
 
 function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | null) {
@@ -110,7 +119,7 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
   const wind = audio.loop('wind');
   wind.setVolume(0.25);
   // Offline: practice targets. Online: other players.
-  const targets = net ? null : new Targets(world.scene, map, physics, spawn);
+  const targets = net ? null : new Targets(world.scene, map);
   const remotes = net ? new Remotes(world.scene, audio) : null;
   let phase: Phase = welcome?.phase ?? 'live';
   const playing = () => phase === 'live';
@@ -133,7 +142,26 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
 
   let time = 0;
   let message: { text: string; color: string; until: number } | null = null;
-  const say = (text: string, color: string = HUD_COLORS.ink) => (message = { text, color, until: time + MESSAGE_TIME });
+  const say = (text: string, color: string = HUD_COLORS.ink, seconds = MESSAGE_TIME) => (message = { text, color, until: time + seconds });
+
+  // The mission: get from the insertion point to the extraction pad. No marker: a bearing at the
+  // start, then the orange smoke over the pad.
+  let missionStart = 0, extracted = false;
+  function brief() {
+    const p = player.pos, e = map.extract;
+    const dist = Math.round(Math.hypot(e.x - p.x, e.z - p.z) / 10) * 10;
+    say(`EXTRACTION  ${bearingName(e.x - p.x, e.z - p.z)}  ${dist} M  ·  FOLLOW THE ORANGE SMOKE`, HUD_COLORS.signal, BRIEFING_TIME);
+    missionStart = time;
+    extracted = false;
+  }
+  function checkExtraction() {
+    if (extracted || !controlling()) return;
+    if (Math.hypot(player.pos.x - map.extract.x, player.pos.z - map.extract.z) > EXTRACT_RADIUS) return;
+    extracted = true;
+    const s = Math.round(time - missionStart);
+    say(`EXTRACTED  ·  ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, HUD_COLORS.signal, 6);
+    audio.jingle(true);
+  }
   let hitMarker: { at: number; kill: boolean } | null = null;
   const mark = (kill: boolean) => (hitMarker = { at: time, kill });
 
@@ -276,7 +304,7 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
         const sp = map.spawns[msg.spawn];
         player.teleport(sp, map.heightAt(sp.x, sp.z));
         rifle.reset();
-        say('GO', HUD_COLORS.red);
+        brief();
       } else if (msg.t === 'left') {
         remotes.remove(msg.id);
       } else if (msg.t === 'fire') {
@@ -325,6 +353,8 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
       menu.join(`DISCONNECTED: ${reason.toUpperCase()}`).then(() => location.reload());
     };
   }
+
+  if (!net) brief();
 
   function sendState(dt: number) {
     if (!net || !playing()) return;
@@ -491,12 +521,14 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
     if (rifle.update(dt) === 'reloaded') say('RELOADED');
     updateAim(dt);
     footsteps();
+    checkExtraction();
     sendState(dt);
     if (message && time > message.until) message = null;
 
     placeCamera(acc / STEP);
     placeViewmodel(dt);
     world.followShadow(feet);
+    world.update(dt);
     fx.syncTrails(bullets.live);
     fx.update(dt);
     audio.setListener(camera);
@@ -553,6 +585,8 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
     get lastHit() { return lastHit; },
     get shotsFired() { return shotsFired; },
     get message() { return message; },
+    get extracted() { return extracted; },
+    seed,
   };
 }
 

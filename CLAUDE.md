@@ -4,7 +4,8 @@ Browser co-op game: a small squad of players against AI, in the spirit of the wi
 from Call of Duty Spec Ops (snowy terrain, long sightlines, patrols to slip past or pick off).
 
 The code started as a copy of Skeleton Crew (a multiplayer tank game). The soldier, rifle and look are
-new; the map layout and the PvP match flow (lobby, kill limit) are inherited and still to be replaced.
+new, and so is the procedural map (`mapgen.ts`: valley, forest, creek, route from start to extraction,
+outposts). The PvP match flow (lobby, kill limit) is inherited and still to be replaced.
 
 ## Direction
 

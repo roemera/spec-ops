@@ -3,9 +3,10 @@
 A browser co-op game: a small squad against AI, in the spirit of the winter sniper mission from
 Call of Duty Spec Ops. Clean low poly look (think Superhot).
 
-**Status:** early. You play a soldier with a scoped bolt-action rifle on the inherited Skeleton Crew map
-(snowed over). Offline there is a practice range of red targets; online it is still the old free-for-all
-match flow until the AI and co-op missions arrive.
+**Status:** early. You play a soldier with a scoped bolt-action rifle in a procedurally generated snowy
+valley, from the insertion point to the extraction pad. Offline, red stand-in guards (who don't shoot
+back yet) hold the outposts; online it is still the old free-for-all match flow until the AI and
+co-op missions arrive.
 
 Stack: TypeScript, Three.js, Rapier (WebAssembly physics), Vite. Everything (map, models, textures) is generated in code.
 
@@ -29,17 +30,26 @@ The match starts when everyone (2+) is ready, or when the host types `start` in 
 **Developing:** `npm run dev` starts the game server (port 8080) and the Vite dev server together,
 then open http://localhost:5173 (Vite forwards the game connection to 8080). Without a
 server.config.json the password is `changeme`. Press START NOW in the lobby (or type `start` in that terminal) to begin, even solo;
-Ctrl+C stops both. PRACTICE OFFLINE on the join screen gives the single-player range with targets.
+Ctrl+C stops both. PRACTICE OFFLINE on the join screen plays a new map solo, with stand-in guards at the outposts.
 
 `npm run dev` and `npm run build` first run `scripts/ensure-native.mjs`, which installs Vite's native
 binaries for your platform if npm skipped them (a known npm bug that shows up on Windows as
 "Cannot find native binding").
 
-The map is 400 m across (`MAP_SIZE` in `packages/shared/src/constants.ts`; the generator scales its
-layout to it).
+## The map
+
+Every map is generated from a seed (`packages/shared/src/mapgen.ts`). A seed gives a 640 m valley
+walled in by mountains: rolling hills, rocky ridges, a frozen creek, thick pine forest broken by open
+snowfields, boulders and fallen logs for cover. The squad inserts on one edge and has to reach the
+extraction pad on the opposite one (about 450 m away), past two to four outposts (cabins, a
+watchtower, sandbag walls) where the enemy will be. There is no marker: you get a bearing when you
+spawn, and orange smoke rises over the pad.
+
+Offline you get a new map every time (`?seed=123` to replay one; the seed is in `__game.seed`).
+The server picks a random seed when it starts, unless `mapSeed` in the config or `MAP_SEED` is set.
 
 URL options: `?offline` skips the menu, `?join=host:port&name=X&password=Y` joins directly,
-`?seed=123` picks the offline map, `?test` hides the click-to-play panel (for headless checks).
+`?seed=123` picks the offline map (otherwise random), `?test` hides the click-to-play panel (for headless checks).
 
 ## Controls
 
@@ -70,13 +80,13 @@ start audio (browser rule).
 
 ```
 packages/
-  shared/   constants.ts (tuning), mapgen.ts (seeded map), rng.ts
+  shared/   constants.ts (tuning), mapgen.ts (procedural map), rng.ts
   shared/   hitzones.ts (head/body/limb damage, Health), protocol.ts (messages, 36-byte soldier state)
   server/   main.ts (http + WebSocket on one port), match.ts (lobby, countdown, spawns, kills), config.ts
   client/   main.ts (loop: input, scope, breath, recoil, camera), sim/player.ts (character controller,
             stances), sim/rifle.ts (magazine, bolt, reload), sim/bullets.ts (ballistics),
-            models/ (soldier, rifle), render/ (pipeline, palette), world.ts (map, light, shadows),
-            targets.ts (practice range), remotes.ts (other players, interpolated), fx.ts (trails,
+            models/ (soldier, rifle), render/ (pipeline, palette), world.ts (terrain, instanced
+            forest, objects, light, smoke), targets.ts (stand-in outpost guards), remotes.ts (other players, interpolated), fx.ts (trails,
             puffs, shatter), audio.ts, net.ts, ui/hud.ts, ui/menu.ts
 ```
 

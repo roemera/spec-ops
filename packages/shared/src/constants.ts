@@ -39,8 +39,8 @@ export const RECOIL_PITCH = (1.6 * Math.PI) / 180; // rad the view kicks up per 
 export const RECOIL_SETTLE = 0.35; // s
 
 // World
-export const MAP_SIZE = 400; // m, square, centred on the origin
-export const MAP_CELLS = 128; // height grid cells per side
+export const MAP_SIZE = 640; // m, square, centred on the origin (mountains take the outer 70 m)
+export const MAP_CELLS = 200; // height grid cells per side (3.2 m: the low poly facet size)
 export const FOG_NEAR = 60; // m: fog starts
 export const FOG_FAR = 420; // m: nothing visible beyond
 
