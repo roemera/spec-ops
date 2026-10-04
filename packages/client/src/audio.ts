@@ -280,7 +280,7 @@ export const GENERATORS: Record<SoundName, SoundDef> = {
   // Wind, after Andy Farnell's model (Designing Sound, "Practical 18: Wind"). One control signal,
   // the wind's strength, drives everything: a slow swell, plus gusts (noise low-passed twice at
   // 0.5 Hz, so they wander), plus squalls (noise low-passed at 3 Hz, gated so only its peaks get
-  // through). That strength sets the level of a broad band of noise around 800 Hz, and both the
+  // through). That strength sets the level of a broad band of noise around 600 Hz (Farnell uses 800; lower suits a wide valley), and both the
   // level and the pitch of two narrow resonances (Q 60), the whistle, which rise as it blows
   // harder. Crossfaded into a 20 s loop.
   wind: {
@@ -307,12 +307,12 @@ export const GENERATORS: Record<SoundName, SoundDef> = {
       const body = bp(1), whistle1 = bp(60), whistle2 = bp(60), rumble = lp(120);
       return (t, r) => {
         const n = r() * 2 - 1;
-        const swell = 0.45 + 0.15 * Math.sin(2 * Math.PI * 0.1 * t) + 0.08 * Math.sin(2 * Math.PI * 0.035 * t + 1);
-        const gust = gustB(gustA(n)) * 130 * (swell + 0.375);
-        const squall = Math.max(0, squallB(squallA(r() * 2 - 1)) * 40 - 0.4) * 1.4;
+        const swell = 0.5 + 0.09 * Math.sin(2 * Math.PI * 0.1 * t) + 0.05 * Math.sin(2 * Math.PI * 0.035 * t + 1);
+        const gust = gustB(gustA(n)) * 80 * (swell + 0.375);
+        const squall = Math.max(0, squallB(squallA(r() * 2 - 1)) * 40 - 0.4) * 0.7;
         const c = Math.max(0.05, Math.min(1.3, swell + gust + squall));
-        const air = body(n, 800) * c * 1.8;
-        const howl = (whistle1(n, 600 + 400 * c) * 5.5 + whistle2(n, 1000 + 450 * c) * 3) * c * c;
+        const air = body(n, 600) * c * 1.8;
+        const howl = (whistle1(n, 430 + 300 * c) * 5.5 + whistle2(n, 720 + 330 * c) * 3) * c * c;
         return (air + howl + rumble(n) * 2.2 * c) * 1.7;
       };
     },
@@ -460,7 +460,12 @@ export class Audio {
   }
 
   /** A looping sound (wind). Positional if `pos` is given. Safe to call before unlock. */
-  loop(name: SoundName, pos?: THREE.Vector3): Loop {
+  /**
+   * `ambient` (0..1, positional only): the share heard from all round rather than from `pos`, to
+   * soften how much it shifts as you turn. `ambientLevel` matches it to how loud the placed part
+   * arrives (the panner's falloff at the distance the caller keeps it).
+   */
+  loop(name: SoundName, pos?: THREE.Vector3, ambient = 0, ambientLevel = 1): Loop {
     let src: AudioBufferSourceNode | null = null, gain: GainNode | null = null, pn: PannerNode | null = null;
     let rate = 1, volume = 1;
     const p = pos?.clone();
@@ -474,8 +479,13 @@ export class Audio {
       gain = this.ctx.createGain();
       gain.gain.value = volume;
       src.connect(gain);
-      if (p) gain.connect((pn = this.panner(p)));
-      else gain.connect(this.master);
+      if (p) {
+        const placed = this.ctx.createGain(), around = this.ctx.createGain();
+        placed.gain.value = 1 - ambient;
+        around.gain.value = ambient * ambientLevel;
+        gain.connect(placed).connect((pn = this.panner(p)));
+        gain.connect(around).connect(this.master);
+      } else gain.connect(this.master);
       src.start();
     };
     if (this.ctx) start();

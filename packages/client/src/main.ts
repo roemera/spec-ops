@@ -126,8 +126,9 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
 
   const fx = new Fx(world.scene, map.heightAt);
   const audio = new Audio();
-  // The wind's sound comes from upwind, louder the harder it blows.
-  const windSound = audio.loop('wind', new THREE.Vector3());
+  // The wind's sound: louder the harder it blows, mostly all round you, about a third of it from
+  // upwind (kept 20 m off: the panner's falloff there is 12/20).
+  const windSound = audio.loop('wind', new THREE.Vector3(), 0.65, 12 / 20);
   const decals = new Decals(world.scene, map, weather.snow);
   const remotes = new Remotes(world.scene, audio, decals);
   const enemies = new Enemies(world.scene, audio, decals);
@@ -669,8 +670,8 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     lasers.update(enemies.lasers(), dt, viewCanvas.width, viewCanvas.height);
     const windSpeed = Math.hypot(w.x, w.z);
     windSound.setPosition(camera.position.clone().add(new THREE.Vector3(-w.x, 0.3 * windSpeed, -w.z).normalize().multiplyScalar(20)));
-    windSound.setVolume(0.15 + Math.min(0.9, windSpeed * 0.1));
-    windSound.setRate(0.8 + Math.min(0.5, windSpeed * 0.05));
+    windSound.setVolume(0.1 + Math.min(0.55, windSpeed * 0.06));
+    windSound.setRate(0.82 + Math.min(0.25, windSpeed * 0.025));
     fx.syncTrails(bullets.live);
     fx.update(dt);
     audio.setListener(camera);
