@@ -4,7 +4,7 @@ import { AI_STATES, type EnemyView } from './ai.ts';
 
 // Network messages. Rare messages are JSON; the 20 Hz soldier state is a 36-byte binary packet.
 
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 13;
 export const DEFAULT_PORT = 8080;
 export const STATE_HZ = 20;
 export const MAX_PLAYERS = 8;
@@ -28,6 +28,14 @@ export interface Score {
 
 type Vec3 = [number, number, number];
 
+/** Something to pick up: an ammo box or a medkit, at a base or on a body. */
+export interface Pickup {
+  id: number;
+  kind: 'ammo' | 'med';
+  pos: Vec3;
+  amount: number; // rounds, or health
+}
+
 export interface PlayerInfo {
   id: number;
   name: string;
@@ -40,6 +48,7 @@ export type ClientMsg =
   | { t: 'ready'; ready: boolean }
   | { t: 'start' } // anyone in the lobby can start the mission now
   | { t: 'revive'; target: number } // I held E next to this downed teammate for REVIVE_TIME
+  | { t: 'pickup'; id: number } // I'm standing on it and want it
   | { t: 'fire'; shot: number; pos: Vec3; vel: Vec3 }
   | { t: 'hit'; shot: number; target: number; zone: HitZone; point: Vec3; dir: Vec3 }; // shooter-detected; target is a player or an enemy id
 
@@ -54,6 +63,9 @@ export type ServerMsg =
   | { t: 'down'; id: number; by: number; zone: HitZone; bleedOut: number; scores: Score[] } // bleedOut: s left
   | { t: 'revived'; id: number; by: number; health: number; scores: Score[] }
   | { t: 'bledOut'; id: number; scores: Score[] } // out until the next mission
+  | { t: 'pickups'; list: Pickup[] } // everything lying about (mission start, or on joining)
+  | { t: 'drop'; pickup: Pickup } // a body dropped something
+  | { t: 'picked'; id: number; by: number; kind: Pickup['kind']; amount: number; health?: number } // health: the picker's, after a medkit
   | { t: 'enemyDown'; id: number; killer: number; zone: HitZone; dir: Vec3; scores: Score[] } // an enemy was killed
   | { t: 'results'; success: boolean; time: number; scores: Score[]; seconds: number }; // time: mission length, s
 

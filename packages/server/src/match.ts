@@ -1,6 +1,6 @@
 import {
   BLEED_OUT, BULLET_SPEED, COUNTDOWN_SECONDS, WIND_DRIFT, weatherFor, windAt, ENEMY_DAMAGE, ENEMY_ID_BASE, EXTRACT_RADIUS, EnemyAi, FOLIAGE_SEE, GRAVITY,
-  Health, MAX_PLAYERS, Obstacles, RESULTS_TIME, REVIVE_HEALTH, REVIVE_RANGE, SPAWN_PROTECTION, encodeEnemies, generateMap,
+  AMMO_DROP, Health, MAX_PLAYERS, MEDKIT_DROP_CHANCE, MEDKIT_HEAL, Obstacles, PICKUP_RANGE, baseSupplies, type Pickup, RESULTS_TIME, REVIVE_HEALTH, REVIVE_RANGE, SPAWN_PROTECTION, encodeEnemies, generateMap,
   type ClientMsg, type EnemyShot, type GameMap, type HitZone, type Life, type Phase, type PlayerInfo, type PlayerView,
   type Score, type ServerMsg, type SoldierState,
 } from '@spec-ops/shared';
@@ -44,6 +44,9 @@ export class Match {
   private ai: EnemyAi;
   private startedAt = 0; // ms
   private nextShot = 1; // ids for enemy bullets
+  /** Ammo boxes and medkits lying about: the bases' supplies and what the dead dropped. */
+  readonly pickups = new Map<number, Pickup>();
+  private nextPickup = 1;
   private countdownTimer: ReturnType<typeof setInterval> | null = null;
   private resultsTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -83,6 +86,7 @@ export class Match {
     };
     this.players.set(p.id, p);
     p.send({ t: 'welcome', id: p.id, seed: this.seed, players: this.list(), phase: this.phase, spawn: this.pickSpawn(p.id), time: this.missionTime() });
+    if (this.phase === 'live') p.send({ t: 'pickups', list: [...this.pickups.values()] });
     this.broadcastLobby();
     return p;
   }
@@ -132,12 +136,15 @@ export class Match {
     this.phase = 'live';
     this.startedAt = Date.now();
     this.ai.reset();
+    this.pickups.clear();
+    for (const s of baseSupplies(this.map)) this.addPickup(s);
     for (const p of this.players.values()) {
       this.resetCombat(p);
       p.send({ t: 'spawn', spawn: this.pickSpawn(p.id) });
     }
     console.log(`[mission] started: ${this.players.size} players, map ${this.seed}`);
     this.broadcastLobby();
+    this.broadcast({ t: 'pickups', list: [...this.pickups.values()] }); // after the lobby says live
   }
 
   /** Back to the lobby, with the next mission's map ready (clients rejoin to load it). */
@@ -185,6 +192,42 @@ export class Match {
     if (!res.killed) return;
     from.kills++;
     this.broadcast({ t: 'enemyDown', id: msg.target, killer: from.id, zone: msg.zone, dir: msg.dir, scores: this.scores() });
+    // The dead carry ammo, and some a medkit: dropped beside the body.
+    const e = this.ai.get(msg.target);
+    if (e) {
+      const side = Math.random() * Math.PI * 2;
+      const at = (r: number, a: number): [number, number, number] => {
+        const x = e.pos.x + Math.cos(a) * r, z = e.pos.z + Math.sin(a) * r;
+        return [x, this.map.heightAt(x, z), z];
+      };
+      this.broadcast({ t: 'drop', pickup: this.addPickup({ kind: 'ammo', pos: at(0.7, side), amount: AMMO_DROP }) });
+      if (Math.random() < MEDKIT_DROP_CHANCE) {
+        this.broadcast({ t: 'drop', pickup: this.addPickup({ kind: 'med', pos: at(0.9, side + 1.4), amount: MEDKIT_HEAL }) });
+      }
+    }
+  }
+
+  private addPickup(p: Omit<Pickup, 'id'>): Pickup {
+    const pickup = { ...p, id: this.nextPickup++ };
+    this.pickups.set(pickup.id, pickup);
+    return pickup;
+  }
+
+  /**
+   * A player walked onto a pickup. First come first served; they must be standing near it. Ammo
+   * is counted by the picker's client (it owns the rifle); medkits heal here (the server owns health).
+   */
+  pickup(from: Player, id: number) {
+    const p = this.pickups.get(id);
+    if (this.phase !== 'live' || from.life !== 'up' || !p || !from.state) return;
+    const [x, , z] = from.state.pos;
+    if (Math.hypot(x - p.pos[0], z - p.pos[2]) > PICKUP_RANGE + 1.5) return; // a little slack for lag
+    if (p.kind === 'med') {
+      if (from.health.health >= from.health.max) return; // leave it for someone who needs it
+      from.health.heal(p.amount);
+    }
+    this.pickups.delete(id);
+    this.broadcast({ t: 'picked', id, by: from.id, kind: p.kind, amount: p.amount, health: p.kind === 'med' ? from.health.health : undefined });
   }
 
   /** A player held E next to a downed teammate long enough. Trusted, but they must be close. */
@@ -196,20 +239,18 @@ export class Match {
     t.life = 'up';
     t.health.reset();
     t.health.health = REVIVE_HEALTH;
-    t.health.sinceHit = 0;
     from.revives++;
     console.log(`[revive] ${from.name} got ${t.name} up`);
     this.broadcast({ t: 'revived', id: t.id, by: from.id, health: REVIVE_HEALTH, scores: this.scores() });
     this.broadcastLobby();
   }
 
-  /** One AI step: the enemy looks, moves and shoots; players heal or bleed out; the mission may end. */
+  /** One AI step: the enemy looks, moves and shoots; the downed bleed out; the mission may end. */
   tick(dt: number) {
     if (this.phase !== 'live') return;
     const now = Date.now();
     const views: PlayerView[] = [];
     for (const p of this.players.values()) {
-      if (p.life === 'up') p.health.regen(dt);
       if (p.life === 'down' && now - p.downAt > BLEED_OUT * 1000) {
         p.life = 'dead';
         console.log(`[mission] ${p.name} bled out`);

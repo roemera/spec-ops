@@ -27,8 +27,15 @@ export const GRAVITY = 9.81;
 export const BULLET_LIFETIME = 2; // s before a bullet that hit nothing is removed
 export const WIND_DRIFT = 1; // m/s^2 sideways push on a bullet per m/s of wind (5 m/s crosswind: ~0.5 m at 300 m)
 export const MAG_SIZE = 5;
+// Ammo is limited: spare rounds come from ammo boxes at the bases and off the dead.
+export const START_SPARE = 15; // rounds carried besides the loaded magazine
+export const MAX_SPARE = 40;
+export const AMMO_BOX = 15; // rounds in a base's ammo box
+export const AMMO_DROP = 6; // rounds off a body
+export const MEDKIT_DROP_CHANCE = 0.35; // a body carries a medkit
+export const PICKUP_RANGE = 1.6; // m from your feet: walk over it to take it
 export const BOLT_TIME = 1.1; // s between shots (working the bolt)
-export const RELOAD_TIME = 2.6; // s to swap the magazine (ammo is unlimited: it's the reload that costs)
+export const RELOAD_TIME = 2.6; // s to swap the magazine
 // Active reload: press R again while reloading. In the perfect zone the magazine is in at once; in the
 // good zone (around it) a moment later; anywhere else it jams and takes longer. One try per reload.
 export const ACTIVE_RELOAD = { good: [0.36, 0.58], perfect: [0.44, 0.5] } as const; // fractions of RELOAD_TIME
@@ -57,8 +64,8 @@ export const PHYSICS_HZ = 60;
 
 // Damage
 export const PLAYER_HEALTH = 100;
-export const REGEN_DELAY = 5; // s after the last hit before health comes back
-export const REGEN_RATE = 25; // health per second
+// Health doesn't come back by itself: medkits (at the bases, on bodies) and a teammate's revive.
+export const MEDKIT_HEAL = 40;
 export const SPAWN_PROTECTION = 3; // s
 export const RESULTS_TIME = 12; // s the results screen shows before the lobby (and a new map)
 

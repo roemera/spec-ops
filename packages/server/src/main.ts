@@ -68,6 +68,8 @@ wss.on('connection', (ws: WebSocket, req) => {
       match.hit(player, msg);
     } else if (msg.t === 'revive' && player) {
       match.revive(player, msg.target);
+    } else if (msg.t === 'pickup' && player) {
+      match.pickup(player, msg.id);
     } else if (msg.t === 'start' && player) {
       console.log(`[start] #${player.id} ${player.name} started the match`);
       match.forceStart();

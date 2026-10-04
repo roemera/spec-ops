@@ -29,6 +29,7 @@ export interface HudState {
   stance: Stance;
   mag: number;
   active: 'perfect' | 'good' | 'jam' | null; // this reload's second R press, once made
+  spare: number; // rounds in the pouches
   busy: 'bolt' | 'reload' | null;
   busyProgress: number; // 0..1
   breath: number; // 0..1 of held breath left
@@ -219,12 +220,15 @@ export class Hud {
     this.text(STANCE_LABEL[s.stance], x, y - 14, 12, ink, 'left', 700);
   }
 
-  /** Bottom right: rounds in the magazine (ammo is unlimited), and what the rifle is doing. */
+  /** Bottom right: rounds in the magazine and spare, and what the rifle is doing. */
   private drawAmmo(s: HudState) {
     const { ctx, w, h } = this;
     const ink = s.scoped ? C.white : C.ink;
     const x = w - 28, y = h - 62;
-    this.text(String(s.mag), x, y - 2, 30, s.mag === 0 ? C.red : ink, 'right', 700);
+    const spare = `/ ${s.spare}`;
+    this.text(spare, x, y, 14, s.spare === 0 ? C.red : s.scoped ? 'rgba(255,255,255,0.6)' : C.inkSoft, 'right');
+    ctx.font = `600 14px ${FONT}`;
+    this.text(String(s.mag), x - ctx.measureText(spare).width - 8, y - 2, 30, s.mag === 0 ? C.red : ink, 'right', 700);
     if (s.busy === 'reload') this.drawReload(s);
     else if (s.busy) {
       const bw = 90;
@@ -233,7 +237,7 @@ export class Hud {
       ctx.fillStyle = ink;
       ctx.fillRect(x - bw, y + 22, bw * s.busyProgress, 3);
       this.text('BOLT', x - bw, y + 34, 10, ink, 'left', 700);
-    } else if (s.mag === 0) this.text('R  RELOAD', x, y + 26, 11, C.red, 'right', 700);
+    } else if (s.mag === 0) this.text(s.spare ? 'R  RELOAD' : 'NO AMMO', x, y + 26, 11, C.red, 'right', 700);
   }
 
   /**

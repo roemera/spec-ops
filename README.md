@@ -71,7 +71,10 @@ friendly fire and no respawning:
 - At 0 health you go **down** and bleed out over 30 s. A teammate who holds **E** next to you for
   3 s gets you up with 50 health (they can't move or shoot meanwhile).
 - If you bleed out you are **out** until the next mission.
-- Health comes back 5 s after the last hit.
+- Health does not come back by itself. Medkits (+40) and a teammate's revive are the only way back.
+- Ammo runs out: you start with a full magazine and 15 spare rounds (carry up to 40). Each base has an
+  ammo box (15 rounds) and a medkit by a hut door; every enemy you kill drops 6 rounds, and about a
+  third carry a medkit. Walk over one to take it; whoever gets there first has it.
 
 After the results (time, kills, revives, downs, accuracy) everyone goes back to the squad screen with
 a new map. Each page reloads itself to build the new map and rejoins on its own.
@@ -100,7 +103,7 @@ don't), so a crown between you hides the beam. You hear them: a "huh?" when one 
 shout when one spots you, and their boots in the snow.
 
 When you are hit the screen flashes red and you hear the snap, the thump and your own grunt; the
-edges stay red while you are badly hurt. Health comes back 5 s after the last hit. A headshot on an
+edges stay red while you are badly hurt (and stay that way until you find a medkit). A headshot on an
 enemy rings like struck steel.
 
 URL options: `?join=host:port&name=X&password=Y` joins directly, `?test` hides the click-to-play
@@ -116,7 +119,7 @@ panel (for headless checks).
 | C / Z | Crouch / prone (press again to stand) |
 | Right mouse (hold) | Scope (12x). Sway is smallest prone, largest standing or moving |
 | Left mouse | Fire. Work the bolt after every shot (1.1 s) |
-| R | Reload (5-round magazine, unlimited magazines). Press R again while the needle is in the red to slap it home at once; near it, a quick finish; anywhere else it jams (+1.2 s) |
+| R | Reload (5-round magazine, from your spare rounds). Press R again while the needle is in the red to slap it home at once; near it, a quick finish; anywhere else it jams (+1.2 s) |
 | E (hold) | Revive a downed teammate next to you |
 | Tab | Scores |
 

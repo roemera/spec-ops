@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
+  MAX_SPARE, PICKUP_RANGE,
   BULLET_SPEED, BREATH_RECOVER, ENEMY_ID_BASE, GRAVITY, HIP_SPREAD, HOLD_BREATH, Health, PHYSICS_HZ, RECOIL_PITCH,
   EXTRACT_RADIUS, RECOIL_SETTLE, REVIVE_RANGE, REVIVE_TIME, SCOPE_FOV, SCOPE_IN_TIME, SPAWN_PROTECTION, STATE_HZ, SWAY,
   ZONE_LABEL, generateMap, weatherFor, windAt, type Life,
@@ -23,6 +24,7 @@ import { Audio } from './audio';
 import { Enemies } from './enemies';
 import { Remotes } from './remotes';
 import { Decals } from './render/decals';
+import { Pickups } from './pickups';
 import { Net } from './net';
 import { Menu, rejoin, type JoinChoice } from './ui/menu';
 
@@ -129,11 +131,12 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   const decals = new Decals(world.scene, map, weather.snow);
   const remotes = new Remotes(world.scene, audio, decals);
   const enemies = new Enemies(world.scene, audio, decals);
+  const pickups = new Pickups(world.scene);
   const lasers = new Lasers(world.scene, physics);
   let phase: Phase = welcome.phase;
   const playing = () => phase === 'live';
 
-  // The server owns health; we mirror ours (healing at the same rate) and show what it tells us.
+  // The server owns health (it only comes back from medkits and revives); we show what it tells us.
   const health = new Health();
   // Your life this mission: up, down (bleeding out until a teammate revives you) or out.
   let life: Life = 'up';
@@ -234,6 +237,10 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     if (!controlling()) return;
     if (rifle.mag === 0) {
       if (rifle.reload()) audio.play('reload');
+      else if (!rifle.reloading) {
+        audio.play('dry');
+        say('NO AMMO  ·  LOOK ON THE DEAD OR AT A BASE', HUD_COLORS.red);
+      }
       return;
     }
     if (!rifle.fire()) return; // working the bolt or reloading
@@ -294,7 +301,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
           // Mission start: fresh scores, everyone up.
           scores = zeroScores(msg.players);
           enemies.clear(); // the server stood them all up again
-          decals.clear();
+          decals.clear(); // (pickups: the server sends the new list)
         }
         phase = msg.phase;
         if (phase === 'live') menu.hide();
@@ -325,11 +332,27 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       } else if (msg.t === 'damage') {
         if (msg.target === net.id) {
           health.health = msg.health;
-          health.sinceHit = 0;
           hurtAt = time;
           audio.play('hurt', { volume: 1.4, rate: 0.95 + Math.random() * 0.1 });
           if (msg.health > 0) say(`HIT BY ${nameOf(msg.attacker)}  ·  ${ZONE_LABEL[msg.zone]}`, HUD_COLORS.red);
         } else if (msg.attacker === net.id && msg.target < ENEMY_ID_BASE) say(`HIT ${nameOf(msg.target)}  ·  ${ZONE_LABEL[msg.zone]}`);
+      } else if (msg.t === 'pickups') {
+        pickups.set(msg.list);
+      } else if (msg.t === 'drop') {
+        pickups.add(msg.pickup);
+      } else if (msg.t === 'picked') {
+        const at = pickups.byId.get(msg.id)?.model.position.clone();
+        pickups.remove(msg.id);
+        if (msg.by === net.id) {
+          if (msg.kind === 'ammo') {
+            const took = rifle.addSpare(msg.amount);
+            say(`+${took} ROUNDS`);
+          } else {
+            health.health = msg.health ?? health.health;
+            say(`MEDKIT  ·  ${Math.round(health.health)} HEALTH`);
+          }
+          audio.play('pickup', { volume: 0.8 });
+        } else if (at) audio.play('pickup', { pos: at, volume: 0.5 });
       } else if (msg.t === 'enemyDown') {
         scores = msg.scores;
         enemies.kill(msg.id, new THREE.Vector3(...msg.dir));
@@ -356,7 +379,6 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
           life = 'up';
           down = null;
           health.health = msg.health;
-          health.sinceHit = 0;
           say(`${nameOf(msg.by)} GOT YOU UP`);
         } else {
           remotes.setLife(msg.id, 'up');
@@ -563,6 +585,18 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     vm.root.rotation.set(rx, 0, rz);
   }
 
+  /** Standing on something you could use: ask for it (the server says who gets it). */
+  const asked = new Map<number, number>(); // pickup id -> when we last asked
+  function collectPickups() {
+    if (!controlling()) return;
+    for (const p of pickups.near(player.pos.x, player.pos.z, PICKUP_RANGE)) {
+      const wants = p.kind === 'ammo' ? rifle.spare < MAX_SPARE : health.health < health.max;
+      if (!wants || time - (asked.get(p.id) ?? -10) < 1) continue;
+      asked.set(p.id, time);
+      net.sendPickup(p.id);
+    }
+  }
+
   let foot = 1;
   function footsteps() {
     const before = Math.floor(walkPhase / Math.PI);
@@ -570,8 +604,9 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     walkedTo = player.distance;
     if (Math.floor(walkPhase / Math.PI) === before) return;
     if (player.stance !== 'prone') decals.print(player.pos.x, player.pos.z, player.yaw, (foot = -foot), time);
-    const volume = player.stance === 'stand' ? (player.speed > 4 ? 0.7 : 0.45) : player.stance === 'crouch' ? 0.2 : 0.08;
-    audio.play('step', { volume, rate: 0.9 + Math.random() * 0.2 });
+    // Your own boots: quiet (they're under you, not out in the valley), each one a little different.
+    const volume = (player.stance === 'stand' ? (player.speed > 4 ? 0.32 : 0.2) : player.stance === 'crouch' ? 0.1 : 0.04) * (0.8 + Math.random() * 0.4);
+    audio.play('step', { volume, rate: 0.88 + Math.random() * 0.24 });
   }
 
   function frame() {
@@ -594,7 +629,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       acc -= STEP;
     }
     if (rifle.update(dt) === 'reloaded') audio.play('magIn', { volume: rifle.active === 'perfect' ? 1.2 : 0.8 });
-    if (life === 'up') health.regen(dt);
+    collectPickups();
     updateAim(dt);
     footsteps();
     onThePad();
@@ -630,6 +665,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       health: health.health,
       stance: player.stance,
       mag: rifle.mag,
+      spare: rifle.spare,
       active: rifle.active,
       busy: rifle.reloading ? 'reload' : rifle.boltLeft > 0 ? 'bolt' : null,
       busyProgress: rifle.busyProgress,
@@ -652,7 +688,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
 
   // Handle for debugging and automated checks.
   (window as unknown as { __game: unknown }).__game = {
-    THREE, RAPIER, decals, player, rifle, map, physics, world, enemies, remotes, bullets, fire, net, camera, sway, health, weather, wind,
+    THREE, RAPIER, decals, pickups, player, rifle, map, physics, world, enemies, remotes, bullets, fire, net, camera, sway, health, weather, wind,
     /** Tests: no wind, so aimAt lands exactly. */
     setCalm(on: boolean) { calmOverride.on = on; },
     /** Hold the scope / hold breath in tests (headless has no right mouse). */

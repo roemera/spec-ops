@@ -83,6 +83,10 @@ export class Net {
     this.send({ t: 'revive', target });
   }
 
+  sendPickup(id: number) {
+    this.send({ t: 'pickup', id });
+  }
+
   sendState(s: SoldierState) {
     if (this.ws.readyState === WebSocket.OPEN) this.ws.send(encodeState(s));
   }

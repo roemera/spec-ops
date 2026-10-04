@@ -1,14 +1,16 @@
-import { ACTIVE_RELOAD, BOLT_TIME, MAG_SIZE, RELOAD_GOOD_FINISH, RELOAD_JAM, RELOAD_TIME } from '@spec-ops/shared';
+import { ACTIVE_RELOAD, BOLT_TIME, MAG_SIZE, MAX_SPARE, RELOAD_GOOD_FINISH, RELOAD_JAM, RELOAD_TIME, START_SPARE } from '@spec-ops/shared';
 
 export type RifleEvent = 'bolted' | 'reloaded' | null;
 export type ActiveResult = 'perfect' | 'good' | 'jam';
 
 /**
- * Bolt-action rifle: a magazine, a bolt to work after every shot, magazine swaps. Ammo is
- * unlimited. Reloads are active: press R again in the sweet spot to finish early, miss and it jams.
+ * Bolt-action rifle: a magazine, spare rounds, a bolt to work after every shot, magazine swaps.
+ * Spare rounds run out; more come from pickups. Reloads are active: press R again in the sweet spot
+ * to finish early, miss and it jams.
  */
 export class Rifle {
   mag = MAG_SIZE;
+  spare = START_SPARE;
   /** s left working the bolt (after a shot) or swapping the magazine. */
   boltLeft = 0;
   reloadLeft = 0;
@@ -41,7 +43,7 @@ export class Rifle {
 
   /** Start a magazine swap if it would help. Returns true if one started. */
   reload(): boolean {
-    if (this.reloadLeft > 0 || this.mag >= MAG_SIZE) return false;
+    if (this.reloadLeft > 0 || this.mag >= MAG_SIZE || this.spare <= 0) return false;
     this.boltLeft = 0;
     this.reloadLeft = this.reloadTotal = RELOAD_TIME;
     this.reloadT = 0;
@@ -73,7 +75,10 @@ export class Rifle {
       this.reloadLeft -= dt;
       this.reloadT += dt;
       if (this.reloadLeft > 0) return null;
-      this.mag = MAG_SIZE;
+      // Rounds left in the old magazine go back in the pouch.
+      const take = Math.min(MAG_SIZE - this.mag, this.spare);
+      this.mag += take;
+      this.spare -= take;
       return 'reloaded';
     }
     if (this.boltLeft > 0) {
@@ -83,8 +88,16 @@ export class Rifle {
     return null;
   }
 
+  /** Rounds from a pickup. Returns how many it took (the pouches hold MAX_SPARE). */
+  addSpare(n: number) {
+    const take = Math.max(0, Math.min(n, MAX_SPARE - this.spare));
+    this.spare += take;
+    return take;
+  }
+
   reset() {
     this.mag = MAG_SIZE;
+    this.spare = START_SPARE;
     this.boltLeft = this.reloadLeft = this.reloadT = 0;
     this.active = null;
   }

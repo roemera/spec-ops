@@ -6,3 +6,4 @@ export * from './protocol.ts';
 export * from './obstacles.ts';
 export * from './ai.ts';
 export * from './weather.ts';
+export * from './supplies.ts';

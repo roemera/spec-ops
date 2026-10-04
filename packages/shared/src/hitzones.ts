@@ -1,4 +1,4 @@
-import { PLAYER_HEALTH, REGEN_DELAY, REGEN_RATE } from './constants.ts';
+import { PLAYER_HEALTH } from './constants.ts';
 
 // Where a bullet hits a soldier decides the damage. A rifle round to the head or body kills.
 
@@ -23,11 +23,10 @@ export interface HitResult {
   killed: boolean;
 }
 
-/** One soldier's health. The server owns it online; offline the client does. */
+/** One soldier's health. The server owns it; it only comes back from medkits (and a revive). */
 export class Health {
   readonly max: number;
   health: number;
-  sinceHit = Infinity; // s since the last hit, for regeneration
 
   constructor(max = PLAYER_HEALTH) {
     this.max = this.health = max;
@@ -41,20 +40,17 @@ export class Health {
   applyHit(zone: HitZone, scale = 1): HitResult {
     const damage = Math.round(ZONE_DAMAGE[zone] * scale);
     this.health = Math.max(0, this.health - damage);
-    this.sinceHit = 0;
     return { zone, damage, health: this.health, killed: this.dead };
   }
 
-  /** Players heal after a while without being hit. Returns true if health changed. */
-  regen(dt: number): boolean {
-    this.sinceHit += dt;
-    if (this.dead || this.health >= this.max || this.sinceHit < REGEN_DELAY) return false;
-    this.health = Math.min(this.max, this.health + REGEN_RATE * dt);
-    return true;
+  /** A medkit: up to `amount` back, never over the maximum. Returns what it actually gave. */
+  heal(amount: number): number {
+    const before = this.health;
+    this.health = Math.min(this.max, this.health + amount);
+    return this.health - before;
   }
 
   reset() {
     this.health = this.max;
-    this.sinceHit = Infinity;
   }
 }

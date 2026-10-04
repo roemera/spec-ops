@@ -4,12 +4,19 @@ import { makeRng } from '@spec-ops/shared';
 // All sounds are generated at startup. Outside sounds are positional (HRTF) and delayed by the
 // speed of sound, so you can hear where a shot came from and roughly how far.
 
-const RATE = 22050;
+export const RATE = 44100;
 const SPEED_OF_SOUND = 343; // m/s
 
-export type SoundName = 'shot' | 'bolt' | 'reload' | 'dry' | 'step' | 'impact' | 'hit' | 'shatter' | 'wind' | 'shout' | 'huh' | 'hurt' | 'headshot' | 'magIn' | 'perfect' | 'jam';
+export type SoundName = 'shot' | 'bolt' | 'reload' | 'dry' | 'step' | 'impact' | 'hit' | 'shatter' | 'wind' | 'shout' | 'huh' | 'hurt' | 'headshot' | 'magIn' | 'perfect' | 'jam' | 'pickup';
 
 type Gen = (t: number, rnd: () => number) => number;
+
+interface SoundDef {
+  seconds: number;
+  /** Several takes, one picked at random each play (default 1). */
+  variants?: number;
+  gen: (variant: number) => Gen;
+}
 
 /** A short click: a burst of noise with a ring at `freq`. */
 const click = (t: number, at: number, freq: number, r: () => number) => {
@@ -36,7 +43,44 @@ const voice = (seconds: number, f0: (t: number) => number, f1: number, f2: numbe
   };
 };
 
-const GENERATORS: Record<SoundName, { seconds: number; gen: () => Gen }> = {
+/**
+ * A metal part striking metal: a tick of noise and a few inharmonic ringing modes (like a small
+ * steel part), the higher ones dying faster. `f0` sets the size: low for a magazine, high for a pin.
+ */
+const clank = (t: number, at: number, f0: number, decay: number, amp: number, r: () => number) => {
+  const u = t - at;
+  if (u < 0 || u > 0.4) return 0;
+  let x = (r() * 2 - 1) * Math.exp(-u * 900) * 1.2;
+  const modes = [1, 2.32, 4.25, 6.83, 9.4];
+  for (let k = 0; k < modes.length; k++) x += Math.sin(2 * Math.PI * f0 * modes[k] * u + k) * Math.exp(-u * decay * (1 + k * 0.7)) / (1 + k * 0.8);
+  return x * amp;
+};
+
+/** A one-pole low-pass, stateful: feed it one sample at a time. `a` 0..1 (smaller = darker). */
+const lowpass = (a: number) => {
+  let y = 0;
+  return (x: number) => (y += a * (x - y));
+};
+
+/** Metal sliding on metal between `from` and `to` s: bright filtered noise with a gritty buzz. */
+const scraper = () => {
+  const lp = lowpass(0.35), lp2 = lowpass(0.05);
+  return (t: number, from: number, to: number, amp: number, r: () => number) => {
+    const n = r() * 2 - 1, band = lp(n) - lp2(n); // band-pass: no rumble, no hiss
+    if (t < from || t > to) return 0;
+    const k = (t - from) / (to - from);
+    const grit = 0.6 + 0.4 * Math.sin(2 * Math.PI * 140 * t + 3 * Math.sin(2 * Math.PI * 23 * t));
+    return band * grit * Math.sin(Math.PI * k) * amp * 2.5;
+  };
+};
+
+/** Soft clip: untouched below 0.8, rounding off toward 1 above (no harsh digital clipping). */
+export function soften(x: number) {
+  const a = Math.abs(x);
+  return a < 0.8 ? x : Math.sign(x) * (0.8 + 0.2 * Math.tanh((a - 0.8) / 0.2));
+}
+
+export const GENERATORS: Record<SoundName, SoundDef> = {
   // An enemy spots you: a sharp, rising-then-falling "HEY!".
   shout: {
     seconds: 0.45,
@@ -47,38 +91,65 @@ const GENERATORS: Record<SoundName, { seconds: number; gen: () => Gen }> = {
     seconds: 0.35,
     gen: () => voice(0.35, (t) => 120 + 60 * (t / 0.35), 550, 1000, (t) => Math.min(1, t / 0.04) * Math.exp(-((t - 0.12) ** 2) / 0.02) * 0.8),
   },
-  // Supersonic crack, then a low boom that rolls off.
+  // A rifle shot up close: the supersonic crack, the muzzle blast, a chest-thump of low end, then the
+  // report rolling round the valley, slapping back off the slopes a few times, duller each time.
   shot: {
-    seconds: 1.4,
+    seconds: 2.6,
     gen: () => {
-      let lp = 0;
+      const blastLp = lowpass(0.3), tailLp = lowpass(0.035), tailLp2 = lowpass(0.05), echoLp = lowpass(0.08);
+      const echoes = [[0.16, 0.45], [0.37, 0.3], [0.71, 0.2], [1.15, 0.12]];
       return (t, r) => {
-        lp += 0.18 * (r() * 2 - 1 - lp);
-        const crack = (r() * 2 - 1) * Math.exp(-t * 160);
-        const boom = Math.sin(2 * Math.PI * (70 - 30 * t) * t) * Math.exp(-t * 7);
-        return 1.6 * crack + 2.4 * lp * Math.exp(-t * 4) + 0.9 * boom;
+        const n = r() * 2 - 1;
+        // N-wave: a sharp positive spike then negative, under a millisecond, then bright hash.
+        const crack = (t < 0.00035 ? 1 : t < 0.0007 ? -0.8 : 0) * 2.5 + n * Math.exp(-t * 700) * 1.4;
+        const blast = blastLp(n) * Math.exp(-t * 28) * 3.2;
+        const thump = Math.sin(2 * Math.PI * (48 + 70 * Math.exp(-t * 35)) * t) * Math.exp(-t * 11) * 1.4;
+        const tail = tailLp2(tailLp(n)) * (Math.exp(-t * 1.6) * 0.8 + 0.2 * Math.exp(-t * 0.6)) * 9 * Math.min(1, t * 20);
+        let echo = 0;
+        const e = echoLp(n);
+        for (const [at, amp] of echoes) if (t > at) echo += e * amp * Math.exp(-(t - at) * 14) * 3.5;
+        return Math.tanh(crack + blast + thump + tail + echo) * 1.9;
       };
     },
   },
-  // Bolt up, back, forward, down.
+  // Working the bolt: lift (click), draw back (slide, then the empty case ticks out against the
+  // stop), drive forward (slide, a round strips into the chamber), turn down to lock (solid click).
   bolt: {
     seconds: 0.75,
-    gen: () => (t, r) => click(t, 0.02, 1800, r) + 0.8 * click(t, 0.2, 1200, r) + click(t, 0.48, 1500, r) + 0.7 * click(t, 0.62, 2200, r),
+    gen: () => {
+      const sc = scraper();
+      return (t, r) =>
+        clank(t, 0.01, 1700, 60, 0.7, r) +
+        sc(t, 0.07, 0.19, 0.5, r) + clank(t, 0.19, 1150, 45, 1, r) + clank(t, 0.235, 2900, 90, 0.35, r) +
+        sc(t, 0.36, 0.48, 0.55, r) + clank(t, 0.48, 1350, 40, 1.1, r) +
+        clank(t, 0.6, 2100, 55, 0.85, r);
+    },
   },
-  // Magazine out and a fumble in the pouch (the seat is magIn, when it actually goes in).
+  // Magazine out: the release clicks, the mag slides out of the well, a hand into a pouch.
   reload: {
-    seconds: 0.7,
-    gen: () => (t, r) => 0.8 * click(t, 0.05, 900, r) + 0.3 * click(t, 0.4, 600, r) + 0.25 * click(t, 0.55, 750, r),
+    seconds: 0.75,
+    gen: () => {
+      const sc = scraper(), cloth = lowpass(0.06);
+      return (t, r) => {
+        const n = r() * 2 - 1, c = cloth(n);
+        const rustle = t > 0.36 && t < 0.62 ? c * 4 * Math.sin((Math.PI * (t - 0.36)) / 0.26) * (0.6 + 0.4 * Math.sin(t * 90)) : 0;
+        return clank(t, 0.02, 2600, 80, 0.55, r) + sc(t, 0.05, 0.17, 0.6, r) + clank(t, 0.17, 780, 50, 0.45, r) + rustle * 0.6;
+      };
+    },
   },
-  // The magazine seated (end of any reload).
+  // Magazine in: a short slide up the well, the solid seat, the catch snapping over.
   magIn: {
-    seconds: 0.15,
-    gen: () => (t, r) => click(t, 0, 1400, r) + 0.6 * click(t, 0.05, 2400, r),
+    seconds: 0.3,
+    gen: () => {
+      const sc = scraper();
+      return (t, r) => sc(t, 0, 0.06, 0.5, r) + clank(t, 0.06, 820, 38, 1.2, r) + clank(t, 0.075, 2400, 85, 0.55, r);
+    },
   },
-  // Perfect active reload: a hard slap and a bright rising ping.
+  // Perfect active reload: the palm slaps the magazine home hard, a bright catch.
   perfect: {
-    seconds: 0.45,
-    gen: () => (t, r) => 1.2 * click(t, 0, 2000, r) + 0.5 * Math.sin(2 * Math.PI * (1500 + 1400 * t) * t) * Math.exp(-t * 9),
+    seconds: 0.4,
+    gen: () => (t, r) =>
+      Math.sin(2 * Math.PI * 170 * t) * Math.exp(-t * 45) * 0.9 + clank(t, 0.0, 900, 35, 0.9, r) + clank(t, 0.012, 3100, 70, 0.45, r),
   },
   // Fumbled active reload: a dull metal clunk and a rattle.
   jam: {
@@ -91,19 +162,37 @@ const GENERATORS: Record<SoundName, { seconds: number; gen: () => Gen }> = {
       };
     },
   },
-  dry: {
-    seconds: 0.1,
-    gen: () => (t, r) => click(t, 0, 2600, r),
-  },
-  // Boot in snow: a soft, filtered crunch.
-  step: {
-    seconds: 0.22,
+  // Picking something up: a hand on canvas, rounds or bottles rattling, a latch.
+  pickup: {
+    seconds: 0.5,
     gen: () => {
-      let lp = 0;
+      const cloth = lowpass(0.08);
       return (t, r) => {
-        lp += 0.25 * (r() * 2 - 1 - lp);
-        const grain = r() < 0.08 ? (r() * 2 - 1) * 0.5 : 0;
-        return (lp * 2 + grain) * Math.sin(Math.PI * Math.min(1, t / 0.22)) * Math.exp(-t * 8);
+        const c = cloth(r() * 2 - 1) * 3 * Math.exp(-t * 9);
+        return c + clank(t, 0.05, 2300, 90, 0.35, r) + clank(t, 0.11, 2700, 100, 0.3, r) + clank(t, 0.16, 2050, 90, 0.3, r) + clank(t, 0.3, 1300, 60, 0.45, r);
+      };
+    },
+  },
+  // Dry fire: the firing pin snaps on an empty chamber.
+  dry: {
+    seconds: 0.15,
+    gen: () => (t, r) => clank(t, 0, 3300, 110, 0.7, r),
+  },
+  // A boot in snow: a muffled heel thump and a squeak-crunch of packed grains. Several takes,
+  // picked at random, so a run of steps never repeats.
+  step: {
+    seconds: 0.3,
+    variants: 6,
+    gen: (v) => {
+      const grainLp = lowpass(0.3 + 0.06 * v), body = lowpass(0.04), seedR = makeRng(v * 131 + 7);
+      const len = 0.17 + seedR.next() * 0.08, heel = 0.4 + seedR.next() * 0.4, squeak = 900 + seedR.next() * 900;
+      return (t, r) => {
+        const n = r() * 2 - 1;
+        const env = Math.sin(Math.PI * Math.min(1, t / len)) * (t < len ? 1 : 0);
+        const crunch = r() < 0.12 + 0.06 * Math.sin(t * 60 + v) ? grainLp(n) * 3 : grainLp(n) * 0.6;
+        const thump = body(n) * 6 * Math.exp(-t * 30) * heel;
+        const sq = Math.sin(2 * Math.PI * squeak * t) * 0.08 * Math.exp(-t * 25);
+        return (crunch * env + thump + sq) * 0.55;
       };
     },
   },
@@ -178,7 +267,7 @@ export interface Loop {
 
 export class Audio {
   private ctx: AudioContext | null = null;
-  private buffers = new Map<SoundName, AudioBuffer>();
+  private buffers = new Map<SoundName, AudioBuffer[]>();
   private master!: GainNode;
 
   /** Browsers only allow audio after a user gesture; call from a click/keydown. */
@@ -196,13 +285,17 @@ export class Audio {
     this.master = ctx.createGain();
     this.master.gain.value = 0.6;
     this.master.connect(ctx.destination);
-    for (const [name, { seconds, gen }] of Object.entries(GENERATORS) as Array<[SoundName, (typeof GENERATORS)[SoundName]]>) {
-      const len = Math.floor(seconds * RATE);
-      const buf = ctx.createBuffer(1, len, RATE);
-      const data = buf.getChannelData(0);
-      const g = gen(), rnd = makeRng(name.length * 977).next;
-      for (let i = 0; i < len; i++) data[i] = Math.max(-1, Math.min(1, g(i / RATE, rnd) * 0.5));
-      this.buffers.set(name, buf);
+    for (const [name, { seconds, gen, variants = 1 }] of Object.entries(GENERATORS) as Array<[SoundName, SoundDef]>) {
+      const takes: AudioBuffer[] = [];
+      for (let v = 0; v < variants; v++) {
+        const len = Math.floor(seconds * RATE);
+        const buf = ctx.createBuffer(1, len, RATE);
+        const data = buf.getChannelData(0);
+        const g = gen(v), rnd = makeRng(name.length * 977 + v * 31).next;
+        for (let i = 0; i < len; i++) data[i] = soften(g(i / RATE, rnd) * 0.5);
+        takes.push(buf);
+      }
+      this.buffers.set(name, takes);
     }
     for (const fn of this.pending) fn();
     this.pending = [];
@@ -262,15 +355,22 @@ export class Audio {
     const ctx = this.ctx;
     if (!ctx) return;
     const src = ctx.createBufferSource();
-    src.buffer = this.buffers.get(name)!;
+    const takes = this.buffers.get(name)!;
+    src.buffer = takes[Math.floor(Math.random() * takes.length)];
     src.playbackRate.value = opts.rate ?? 1;
     const gain = ctx.createGain();
     gain.gain.value = opts.volume ?? 1;
     src.connect(gain);
     let delay = 0;
     if (opts.pos) {
-      gain.connect(this.panner(opts.pos));
-      delay = opts.pos.distanceTo(this.listenerPos) / SPEED_OF_SOUND;
+      // The air takes the top off distant sounds: a far shot is a dull boom, a near one cracks.
+      const d = opts.pos.distanceTo(this.listenerPos);
+      const air = ctx.createBiquadFilter();
+      air.type = 'lowpass';
+      air.frequency.value = Math.max(700, 20000 * Math.exp(-d / 140));
+      gain.connect(air);
+      air.connect(this.panner(opts.pos));
+      delay = d / SPEED_OF_SOUND;
     } else gain.connect(this.master);
     src.start(ctx.currentTime + delay);
   }
@@ -309,7 +409,7 @@ export class Audio {
     const start = () => {
       if (stopped || !this.ctx) return;
       src = this.ctx.createBufferSource();
-      src.buffer = this.buffers.get(name)!;
+      src.buffer = this.buffers.get(name)![0];
       src.loop = true;
       src.playbackRate.value = rate;
       gain = this.ctx.createGain();
