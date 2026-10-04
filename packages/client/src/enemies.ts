@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 import { AI_HZ, STANCES, type AiState, type EnemyView, type HitZone, type Stance } from '@spec-ops/shared';
 import { buildSoldier, type SoldierModel } from './models/soldier';
-import { PAL } from './render/palette';
+import { ENEMY_COLOR } from './render/palette';
 import type { Audio } from './audio';
 import type { Fx } from './fx';
 import type { LaserSource } from './render/lasers';
 
 // The enemy, as the server reports it (AI_HZ): drawn a little in the past and smoothed between
-// updates. Their state is never shown on screen; you hear it: a "huh?" when one gets suspicious,
-// a shout when one spots you.
+// updates. Their mood shows in their colour (yellow, orange, red: see ENEMY_COLOR) and you hear
+// it change: a "huh?" when one gets suspicious, a shout when one spots you.
 
 const DELAY = 1.5 / AI_HZ; // s behind the newest update, so there are always two to blend
 
@@ -60,7 +60,7 @@ export class Enemies {
   }
 
   private add(v: EnemyView): Enemy {
-    const model = buildSoldier(PAL.enemy);
+    const model = buildSoldier(ENEMY_COLOR[v.state]);
     model.root.position.set(v.pos.x, v.pos.y, v.pos.z);
     model.root.rotation.y = v.yaw;
     this.scene.add(model.root);
@@ -75,6 +75,7 @@ export class Enemies {
     if (state === 'alert') this.audio.play('shout', { pos: at, volume: 1.4, rate: 0.9 + Math.random() * 0.2 });
     else if (state === 'suspicious' && e.state === 'patrol') this.audio.play('huh', { pos: at, rate: 0.9 + Math.random() * 0.2 });
     e.state = state;
+    (e.model.parts[0].material as THREE.MeshLambertMaterial).color.setHex(ENEMY_COLOR[state]);
   }
 
   /** Killed: the body shatters along the bullet's direction. */
@@ -83,7 +84,7 @@ export class Enemies {
     if (!e || e.dead) return;
     e.dead = true;
     e.model.root.visible = false;
-    this.fx.shatter(e.model.parts, dir, PAL.enemy);
+    this.fx.shatter(e.model.parts, dir, ENEMY_COLOR[e.state]);
     this.audio.play('shatter', { pos: e.model.root.position.clone().setY(e.model.root.position.y + 1) });
   }
 

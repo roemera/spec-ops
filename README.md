@@ -90,8 +90,10 @@ far away, at the edge of their view or behind pine branches. They hear footsteps
 and every rifle shot within 260 m, and anyone who sees a friend go down comes looking. Their aim
 gets better the longer they keep you in sight, and two body hits put you down.
 
-Every enemy rifle has a **laser sight**, so you can see where each one is looking: faint while they
-patrol, sweeping slowly back and forth while they are suspicious or searching, bold once alert. While
+Enemies wear their mood: **yellow** on patrol, **orange** when suspicious or searching, **red** once
+they have spotted you. Every enemy rifle has a **laser sight** in the same colour, so you can see where
+each one is looking: faint while they patrol, sweeping slowly back and forth while they are suspicious
+or searching, bold once alert. While
 they aim at you the laser wavers and then holds steady: a steady laser means the next shot will
 probably hit. A laser pointed straight at your eyes shows as a red glare at its rifle. You hear them: a "huh?" when one gets suspicious, a
 shout when one spots you, and their boots in the snow. Health comes back 5 s after the last hit.

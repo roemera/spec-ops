@@ -4,11 +4,11 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { AiState } from '@spec-ops/shared';
-import { PAL } from './palette';
+import { ENEMY_COLOR, PAL } from './palette';
 
-// Enemy laser sights: a red line from every enemy rifle to whatever it points at, so you can see
-// where they look. Thin and faint while patrolling, stronger when suspicious or searching (their
-// scanning sweeps it about), bold once alert. A laser pointed straight at your eyes shows as a red
+// Enemy laser sights: a line from every enemy rifle to whatever it points at, so you can see
+// where they look, in the enemy's mood colour. Thin, faint and yellow while patrolling, stronger and
+// orange when suspicious or searching (their scanning sweeps it about), bold and red once alert. A laser pointed straight at your eyes shows as a red
 // glare at its rifle. Direction and length are smoothed so the lines glide rather than flicker, and
 // each beam fades out over the last few metres before your eyes.
 
@@ -36,8 +36,8 @@ export class Lasers {
   private smooth = new Map<number, { dir: THREE.Vector3; len: number }>();
 
   constructor(private scene: THREE.Scene, private physics: RAPIER.World) {
-    const make = (width: number, opacity: number) => {
-      const mat = new LineMaterial({ color: PAL.enemy, linewidth: width, transparent: true, opacity, fog: true, depthWrite: false });
+    const make = (color: number, width: number, opacity: number) => {
+      const mat = new LineMaterial({ color, linewidth: width, transparent: true, opacity, fog: true, depthWrite: false });
       // Fade near the camera, using the view depth the line shader already passes along for fog.
       mat.onBeforeCompile = (shader) => {
         shader.fragmentShader = shader.fragmentShader.replace(
@@ -52,7 +52,7 @@ export class Lasers {
       scene.add(line);
       return { line, mat };
     };
-    this.lines = { calm: make(1.5, 0.45), wary: make(2, 0.7), alert: make(3, 0.95) };
+    this.lines = { calm: make(ENEMY_COLOR.patrol, 1.5, 0.5), wary: make(ENEMY_COLOR.suspicious, 2, 0.75), alert: make(PAL.enemy, 3, 0.95) };
     // Glare: a soft red disc, drawn over everything at the muzzle.
     const c = document.createElement('canvas');
     c.width = c.height = 64;
