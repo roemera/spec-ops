@@ -11,6 +11,7 @@ import { Match, type Player } from './match.ts';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const config = loadConfig(root);
 const match = new Match(config.mapSeed);
+match.peaceful = config.peaceful;
 
 const http = createServer(serveStatic(join(root, 'packages/client/dist')));
 const wss = new WebSocketServer({ server: http, path: '/ws' });

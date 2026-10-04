@@ -13,12 +13,14 @@ Mission rules are plain logic in `server/src/match.ts`; test them in Node with f
 
 ## Direction
 
-- **Clean low poly, Superhot-like.** Flat-shaded simple geometry, a stark limited palette, crisp
-  full-resolution rendering. No pixelation, vertex wobble or dithering from the old low-res look.
+- **Low poly with simple textures, toward Half-Life 1.** Modest geometry with some detail (kit on
+  soldiers, frames and roofs on huts), small procedural textures, smooth lighting, a limited palette,
+  crisp full-resolution rendering. Readability first: enemies keep their mood colours. Nothing fancy
+  (no post-processing). Merge static pieces (`render/merge.ts`) so detail doesn't cost draw calls.
 - **Spend polish only where it changes how the game plays.** If a sound or animation would take real
   work to do well, keep it simple and stylised rather than detailed.
 - Everything is generated in code: map (seeded), models (boxes/cylinders/low poly meshes), textures
-  (tiny canvases, if any), sounds (procedural). No asset files.
+  (small canvases, `render/textures.ts`), sounds (procedural). No asset files.
 - No minimap and no spotting markers. Information comes from looking and directional sound.
 - Trusted clients, dev-run server, password to join. No anti-cheat, no matchmaking.
 

@@ -1,7 +1,7 @@
 # Spec Ops
 
 A browser co-op game: a small squad against AI, in the spirit of the winter sniper mission from
-Call of Duty Spec Ops. Clean low poly look (think Superhot).
+Call of Duty Spec Ops. Low poly with simple textures (think Half-Life 1).
 
 **Status:** playable end to end. Up to 8 players form a squad with scoped bolt-action rifles and have
 to cross a procedurally generated snowy valley, from the insertion point to the extraction pad, past
@@ -150,6 +150,10 @@ packages/
 
 ## Look
 
-Clean low poly in the spirit of Superhot: flat-shaded geometry, a near-white snowy world, dark pines
-and rocks for cover, black rifles, red enemies. Full resolution with antialiasing and soft sun
-shadows; no textures. Colours live in `packages/client/src/render/palette.ts`.
+Low poly with simple textures, heading toward Half-Life 1: smooth-lit snowy ground, textured rock,
+bark, pine needles, planks and tin roofs, soldiers in helmets, vests and packs, a wooden-stocked rifle
+with gloved hands in first person. Every texture is drawn in code into a small canvas at startup
+(`render/textures.ts`); most are near-white detail multiplied by a palette colour, so the colours in
+`render/palette.ts` (and the enemies' mood colours) still decide the look. Detailed models are merged
+into one mesh per material (`render/merge.ts`) to keep draw calls down. Full resolution with
+antialiasing and soft sun shadows.

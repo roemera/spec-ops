@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import type { HitZone, Stance } from '@spec-ops/shared';
-import { flat } from '../render/palette';
+import { boxUV, textures } from '../render/textures';
 import { buildRifle } from './rifle';
+import { mergeChildren } from '../render/merge';
 
-// A low poly soldier, one colour, faceless. Origin at the feet, facing -z.
+// A low poly soldier: the uniform in one colour (with a cloth texture), dark kit over it (helmet,
+// goggles, vest and pouches, pack, boots, gloves). Origin at the feet, facing -z.
 // Joints are groups; pose() sets them from a stance blend, the aim pitch and how far and fast it walks.
 //
 // The gait: running is only a few more steps a second than walking, but much longer strides
@@ -56,14 +58,30 @@ export interface SoldierModel {
   parts: THREE.Mesh[];
 }
 
+let gearMats: { webbing: THREE.Material; helmet: THREE.Material; boot: THREE.Material; glove: THREE.Material; goggles: THREE.Material } | null = null;
+/** Kit shared by every soldier: dark webbing, helmet, boots, gloves, goggles. */
+function gear() {
+  const cloth = textures().cloth;
+  return (gearMats ??= {
+    webbing: new THREE.MeshLambertMaterial({ color: 0x4a4d48, map: cloth }),
+    helmet: new THREE.MeshLambertMaterial({ color: 0x5a5f62, map: textures().metal }),
+    boot: new THREE.MeshLambertMaterial({ color: 0x2a2826, map: cloth }),
+    glove: new THREE.MeshLambertMaterial({ color: 0x2b2a28, map: cloth }),
+    goggles: new THREE.MeshLambertMaterial({ color: 0x111518, emissive: 0x0b1820 }),
+  });
+}
+
 export function buildSoldier(color: number): SoldierModel {
-  const mat = flat(color);
+  // The uniform carries the colour (enemies recolour it with their mood); the kit stays dark.
+  const mat = new THREE.MeshLambertMaterial({ color, map: textures().cloth });
+  const kit = gear();
   const root = new THREE.Group();
   const parts: THREE.Mesh[] = [];
   const hit = new Map<THREE.Mesh, { zone: HitZone; half: THREE.Vector3 }>();
 
-  const part = (geo: THREE.BufferGeometry, parent: THREE.Object3D, x: number, y: number, z: number, zone: HitZone, half: THREE.Vector3) => {
-    const m = new THREE.Mesh(geo, mat);
+  /** A body part: drawn with `geo`, hit-tested as a box of half extents `half`. */
+  const part = (geo: THREE.BufferGeometry, parent: THREE.Object3D, x: number, y: number, z: number, zone: HitZone, half: THREE.Vector3, material: THREE.Material = mat) => {
+    const m = new THREE.Mesh(geo, material);
     m.position.set(x, y, z);
     m.castShadow = true;
     parent.add(m);
@@ -72,19 +90,45 @@ export function buildSoldier(color: number): SoldierModel {
     return m;
   };
   const box = (w: number, h: number, d: number, parent: THREE.Object3D, x: number, y: number, z: number, zone: HitZone) =>
-    part(new THREE.BoxGeometry(w, h, d), parent, x, y, z, zone, new THREE.Vector3(w / 2, h / 2, d / 2));
+    part(boxUV(new THREE.BoxGeometry(w, h, d), 0.4), parent, x, y, z, zone, new THREE.Vector3(w / 2, h / 2, d / 2));
+  /** A rounded limb part (capsule) standing in for a w x h x d box. */
+  const limb = (w: number, h: number, d: number, parent: THREE.Object3D, x: number, y: number, z: number, zone: HitZone) => {
+    const r = Math.min(w, d) / 2;
+    return part(new THREE.CapsuleGeometry(r, Math.max(0.01, h - r * 2), 4, 10), parent, x, y, z, zone, new THREE.Vector3(w / 2, h / 2, d / 2));
+  };
+  /** Kit: drawn only, not hit-tested (bullets go by the body parts under it). */
+  const deco = (geo: THREE.BufferGeometry, material: THREE.Material, parent: THREE.Object3D, x: number, y: number, z: number) => {
+    const m = new THREE.Mesh(geo, material);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    parent.add(m);
+    return m;
+  };
+  const kitBox = (w: number, h: number, d: number, material: THREE.Material, parent: THREE.Object3D, x: number, y: number, z: number) =>
+    deco(boxUV(new THREE.BoxGeometry(w, h, d), 0.3), material, parent, x, y, z);
 
   const hips = new THREE.Group();
   root.add(hips);
   box(0.36, 0.2, 0.22, hips, 0, 0.02, 0, 'body'); // pelvis
+  kitBox(0.38, 0.06, 0.24, kit.webbing, hips, 0, 0.1, 0); // belt
+  kitBox(0.08, 0.1, 0.06, kit.webbing, hips, 0.15, 0.05, -0.1); // belt pouch
 
   const torso = new THREE.Group();
   hips.add(torso);
   box(0.44, 0.5, 0.26, torso, 0, 0.36, 0, 'body'); // chest
+  // Vest with magazine pouches, a pack on the back with a bedroll on top.
+  kitBox(0.46, 0.32, 0.29, kit.webbing, torso, 0, 0.4, 0);
+  for (const px of [-0.12, 0, 0.12]) kitBox(0.1, 0.12, 0.06, kit.webbing, torso, px, 0.33, -0.17);
+  kitBox(0.32, 0.36, 0.16, kit.webbing, torso, 0, 0.42, 0.21);
+  deco(new THREE.CylinderGeometry(0.07, 0.07, 0.36, 10).rotateZ(Math.PI / 2), kit.boot, torso, 0, 0.66, 0.21);
   const neck = new THREE.Group();
   neck.position.y = 0.66;
   torso.add(neck);
-  part(new THREE.IcosahedronGeometry(0.13, 1), neck, 0, 0.08, 0, 'head', new THREE.Vector3(0.12, 0.13, 0.12));
+  // Head in a balaclava, a helmet over it, goggles pushed up on the front.
+  part(new THREE.SphereGeometry(0.13, 14, 10), neck, 0, 0.08, 0, 'head', new THREE.Vector3(0.12, 0.13, 0.12));
+  deco(new THREE.SphereGeometry(0.155, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), kit.helmet, neck, 0, 0.1, 0.005).scale.set(1, 0.85, 1.05);
+  deco(new THREE.CylinderGeometry(0.16, 0.165, 0.025, 14), kit.helmet, neck, 0, 0.1, 0.005);
+  kitBox(0.17, 0.045, 0.04, kit.goggles, neck, 0, 0.14, -0.13);
 
   // Arms and rifle pivot together at the shoulders, so the gun follows the aim.
   const aim = new THREE.Group();
@@ -96,9 +140,10 @@ export function buildSoldier(color: number): SoldierModel {
   aim.add(rifle.root);
   const arm = (from: THREE.Vector3, to: THREE.Vector3) => {
     const d = to.clone().sub(from);
-    const m = box(0.11, d.length(), 0.11, aim, 0, 0, 0, 'limb');
+    const m = limb(0.11, d.length(), 0.11, aim, 0, 0, 0, 'limb');
     m.position.copy(from).add(to).multiplyScalar(0.5);
     m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
+    deco(new THREE.SphereGeometry(0.05, 10, 8), kit.glove, aim, to.x, to.y, to.z);
   };
   arm(new THREE.Vector3(0.22, 0, 0), new THREE.Vector3(0.12, -0.09, -0.38)); // right hand on the grip
   arm(new THREE.Vector3(-0.22, 0, 0), new THREE.Vector3(0.1, -0.05, -0.66)); // left under the fore-end
@@ -107,14 +152,20 @@ export function buildSoldier(color: number): SoldierModel {
     const thigh = new THREE.Group();
     thigh.position.x = side * 0.1;
     hips.add(thigh);
-    box(0.15, THIGH, 0.17, thigh, 0, -THIGH / 2, 0, 'limb');
+    limb(0.15, THIGH, 0.17, thigh, 0, -THIGH / 2, 0, 'limb');
+    kitBox(0.08, 0.1, 0.05, kit.webbing, thigh, side * 0.07, -THIGH * 0.45, 0); // leg pocket
     const knee = new THREE.Group();
     knee.position.y = -THIGH;
     thigh.add(knee);
-    box(0.13, SHIN, 0.15, knee, 0, -SHIN / 2, 0, 'limb');
-    box(0.13, 0.08, 0.26, knee, 0, -SHIN + 0.02, -0.05, 'limb'); // boot
+    limb(0.13, SHIN, 0.15, knee, 0, -SHIN / 2, 0, 'limb');
+    kitBox(0.12, 0.1, 0.05, kit.webbing, knee, 0, -0.04, -0.08); // knee pad
+    part(boxUV(new THREE.BoxGeometry(0.14, 0.12, 0.28), 0.3), knee, 0, -SHIN + 0.03, -0.05, 'limb', new THREE.Vector3(0.065, 0.04, 0.13), kit.boot); // boot
     return { thigh, knee };
   });
+
+  // Fold the kit into one mesh per material on each joint (the hit-tested parts stay separate).
+  const keep = new Set<THREE.Object3D>(parts);
+  root.traverse((o) => o instanceof THREE.Group && o !== rifle.root && mergeChildren(o, keep));
 
   const cur: Pose = { ...POSES.stand };
   const inv = new THREE.Matrix4(), o = new THREE.Vector3(), d = new THREE.Vector3();

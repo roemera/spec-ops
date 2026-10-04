@@ -47,6 +47,9 @@ export class Match {
   private countdownTimer: ReturnType<typeof setInterval> | null = null;
   private resultsTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /** The enemy never notices anyone (PEACEFUL=1: for tests and screenshots). */
+  peaceful = false;
+
   constructor(seed: number) {
     this.fixedSeed = seed;
     this.seed = seed || randomSeed();
@@ -217,7 +220,8 @@ export class Match {
       const [x, y, z] = p.state.pos, [vx, vy, vz] = p.state.vel;
       views.push({ id: p.id, pos: { x, y, z }, vel: { x: vx, y: vy, z: vz }, stance: p.state.stance, alive: p.life === 'up' });
     }
-    for (const shot of this.ai.step(dt, views)) this.enemyFired(shot);
+    // Peaceful (tests, screenshots): the enemy patrols but never notices anyone.
+    for (const shot of this.ai.step(dt, this.peaceful ? [] : views)) this.enemyFired(shot);
     const packet = encodeEnemies(this.ai.views());
     for (const p of this.players.values()) p.sendBinary(packet);
     this.checkMissionEnd();

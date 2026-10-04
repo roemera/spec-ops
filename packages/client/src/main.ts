@@ -14,7 +14,7 @@ import { Lasers } from './render/lasers';
 import { PlayerSim, type MoveInput } from './sim/player';
 import { Rifle } from './sim/rifle';
 import { Bullets, type Bullet, type SoldierHit } from './sim/bullets';
-import { buildRifle } from './models/rifle';
+import { addViewArms, buildRifle } from './models/rifle';
 import { strideFor } from './models/soldier';
 import { Input } from './input';
 import { Hud, HUD_COLORS } from './ui/hud';
@@ -45,7 +45,7 @@ const drop = (m: number) => (GRAVITY * m) / (2 * BULLET_SPEED * BULLET_SPEED); /
 // First-person rifle, drawn with its own camera at a fixed fov: where it sits at the hip and
 // when raised to the eye (view space).
 const VM_FOV = 58;
-const HIP = new THREE.Vector3(0.15, -0.15, -0.58);
+const HIP = new THREE.Vector3(0.16, -0.17, -0.66);
 const ADS = new THREE.Vector3(0, -0.085, -0.36);
 
 type Welcome = Extract<ServerMsg, { t: 'welcome' }>;
@@ -116,6 +116,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   vmSun.position.set(0.45, 0.8, 0.3);
   overlay.add(vmSun);
   const vm = buildRifle();
+  addViewArms(vm, PAL.friend);
   overlay.add(vm.root);
   /** The viewmodel muzzle, in world space (for trails): its view-space position, carried by the real camera. */
   const muzzleWorld = () => camera.localToWorld(vm.muzzle.getWorldPosition(new THREE.Vector3()));
