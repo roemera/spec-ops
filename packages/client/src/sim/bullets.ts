@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { BULLET_LIFETIME, GRAVITY, type HitZone } from '@spec-ops/shared';
+import { BULLET_LIFETIME, GRAVITY, WIND_DRIFT, type HitZone } from '@spec-ops/shared';
 
 export interface Bullet {
   id: number;
@@ -20,7 +20,7 @@ export interface SoldierHit {
 }
 
 /**
- * Rifle bullets with drop. Each step sweeps a ray: soldiers come from `probe` (they have no
+ * Rifle bullets with drop and wind drift. Each step sweeps a ray: soldiers come from `probe` (they have no
  * colliders), everything else from Rapier. The nearer hit wins.
  */
 export class Bullets {
@@ -32,6 +32,7 @@ export class Bullets {
     private probe: (origin: THREE.Vector3, dir: THREE.Vector3, len: number) => SoldierHit | null,
     private onHitSoldier: (b: Bullet, hit: SoldierHit, point: THREE.Vector3, dir: THREE.Vector3) => void,
     private onImpact: (b: Bullet, point: THREE.Vector3, normal: THREE.Vector3) => void,
+    private wind: () => { x: number; z: number },
   ) {}
 
   spawn(start: THREE.Vector3, pos: THREE.Vector3, vel: THREE.Vector3, owner: RAPIER.RigidBody | undefined, visual = false): Bullet {
@@ -44,9 +45,15 @@ export class Bullets {
     for (let i = this.live.length - 1; i >= 0; i--) {
       const b = this.live[i];
       b.life -= dt;
+      // Gravity pulls down; the wind pushes along with it.
+      const w = this.wind(), ax = w.x * WIND_DRIFT, az = w.z * WIND_DRIFT;
       const next = b.pos.clone().addScaledVector(b.vel, dt);
+      next.x += 0.5 * ax * dt * dt;
       next.y -= 0.5 * GRAVITY * dt * dt;
+      next.z += 0.5 * az * dt * dt;
+      b.vel.x += ax * dt;
       b.vel.y -= GRAVITY * dt;
+      b.vel.z += az * dt;
       const seg = next.clone().sub(b.pos), len = seg.length(), dir = seg.divideScalar(len);
       const hit = this.world.castRayAndGetNormal(new RAPIER.Ray(b.pos, dir), len, true, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, undefined, undefined, b.owner);
       const wall = hit ? hit.timeOfImpact : Infinity;

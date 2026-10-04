@@ -1,5 +1,5 @@
 import {
-  BLEED_OUT, BULLET_SPEED, COUNTDOWN_SECONDS, ENEMY_DAMAGE, ENEMY_ID_BASE, EXTRACT_RADIUS, EnemyAi, FOLIAGE_SEE, GRAVITY,
+  BLEED_OUT, BULLET_SPEED, COUNTDOWN_SECONDS, WIND_DRIFT, weatherFor, windAt, ENEMY_DAMAGE, ENEMY_ID_BASE, EXTRACT_RADIUS, EnemyAi, FOLIAGE_SEE, GRAVITY,
   Health, MAX_PLAYERS, Obstacles, RESULTS_TIME, REVIVE_HEALTH, REVIVE_RANGE, SPAWN_PROTECTION, encodeEnemies, generateMap,
   type ClientMsg, type EnemyShot, type GameMap, type HitZone, type Life, type Phase, type PlayerInfo, type PlayerView,
   type Score, type ServerMsg, type SoldierState,
@@ -51,7 +51,16 @@ export class Match {
     this.fixedSeed = seed;
     this.seed = seed || randomSeed();
     this.map = generateMap(this.seed);
-    this.ai = new EnemyAi(this.map, new Obstacles(this.map, FOLIAGE_SEE));
+    this.ai = this.newAi();
+  }
+
+  private newAi() {
+    return new EnemyAi(this.map, new Obstacles(this.map, FOLIAGE_SEE), weatherFor(this.seed).visibility);
+  }
+
+  /** Seconds into the mission (0 outside one): drives the wind's gusts, the same on every client. */
+  private missionTime() {
+    return this.phase === 'live' ? (Date.now() - this.startedAt) / 1000 : 0;
   }
 
   get full() {
@@ -70,7 +79,7 @@ export class Match {
       kills: 0, downs: 0, revives: 0, shots: 0, hits: 0, hitShots: new Set(),
     };
     this.players.set(p.id, p);
-    p.send({ t: 'welcome', id: p.id, seed: this.seed, players: this.list(), phase: this.phase, spawn: this.pickSpawn(p.id) });
+    p.send({ t: 'welcome', id: p.id, seed: this.seed, players: this.list(), phase: this.phase, spawn: this.pickSpawn(p.id), time: this.missionTime() });
     this.broadcastLobby();
     return p;
   }
@@ -138,7 +147,7 @@ export class Match {
     if (!this.fixedSeed) {
       this.seed = randomSeed();
       this.map = generateMap(this.seed);
-      this.ai = new EnemyAi(this.map, new Obstacles(this.map, FOLIAGE_SEE));
+      this.ai = this.newAi();
     }
   }
 
@@ -216,10 +225,12 @@ export class Match {
 
   /** An enemy fired: everyone sees the bullet; the hit (decided by the AI) lands now. */
   private enemyFired(shot: EnemyShot) {
-    // Aim the visible bullet so that, with drop, it arrives where the AI meant it to.
+    // Aim the visible bullet so that, with drop and wind, it arrives where the AI meant it to.
     const dx = shot.to.x - shot.from.x, dy = shot.to.y - shot.from.y, dz = shot.to.z - shot.from.z;
     const t = Math.max(0.01, Math.hypot(dx, dz) / BULLET_SPEED);
-    const vel: [number, number, number] = [dx / t, dy / t + 0.5 * GRAVITY * t, dz / t];
+    const wind = windAt(weatherFor(this.seed), this.missionTime());
+    const ax = wind.x * WIND_DRIFT, az = wind.z * WIND_DRIFT;
+    const vel: [number, number, number] = [dx / t - 0.5 * ax * t, dy / t + 0.5 * GRAVITY * t, dz / t - 0.5 * az * t];
     this.broadcast({ t: 'fire', from: shot.enemy, shot: this.nextShot++, pos: [shot.from.x, shot.from.y, shot.from.z], vel });
     const target = shot.hit && this.players.get(shot.hit.player);
     if (!shot.hit || !target || target.life !== 'up' || Date.now() < target.protectedUntil) return;

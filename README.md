@@ -49,6 +49,19 @@ Every mission gets a new random map, unless `mapSeed` in the config or `MAP_SEED
 seed is printed when a mission starts. The first 40% of the route is quiet: no outposts or patrols
 near the insertion point.
 
+## Weather
+
+Each mission's seed also sets its weather: where the wind blows from and how hard (it gusts and
+veers a little over time), and how heavily it snows. It is the same for everyone.
+
+- **Wind pushes bullets.** A 5 m/s crosswind moves a shot about 0.3 m at 200 m, 0.6 m at 300 m and
+  1.1 m at 400 m; a gale doubles that. Hold into the wind at range.
+- There is no wind gauge. Read it from the snow drifting past (it moves with the wind), the
+  extraction smoke leaning over, the wind's sound (it comes from upwind and gets louder), and the
+  briefing when you spawn ("WIND STRONG FROM THE NORTH").
+- **Heavy snow shortens sight for everyone:** the fog closes in and the enemy sees less far, by
+  up to 45%.
+
 ## The mission
 
 The whole squad starts at the insertion point. The mission is won when everyone still standing is
@@ -110,14 +123,14 @@ start audio (browser rule).
 
 ```
 packages/
-  shared/   constants.ts (tuning), mapgen.ts (procedural map), rng.ts
+  shared/   constants.ts (tuning), mapgen.ts (procedural map), weather.ts (wind, snow), rng.ts
   shared/   hitzones.ts (head/body/limb damage, Health), protocol.ts (messages, 36-byte soldier state,
             20-byte enemy state), ai.ts (the enemy), obstacles.ts (line of sight and walking round things)
   server/   main.ts (http + WebSocket on one port, AI tick), match.ts (lobby, countdown, the mission: down,
             revive, extraction, results, new map; the enemy), config.ts
   client/   main.ts (loop: input, scope, breath, recoil, camera), sim/player.ts (character controller,
             stances), sim/rifle.ts (magazine, bolt, reload), sim/bullets.ts (ballistics),
-            models/ (soldier, rifle), render/ (pipeline, palette), world.ts (terrain, instanced
+            models/ (soldier, rifle), render/ (pipeline, palette, snow), world.ts (terrain, instanced
             forest, objects, light, smoke), enemies.ts (the server's enemy, drawn and heard), remotes.ts (other players, interpolated), fx.ts (trails,
             puffs, shatter), audio.ts, net.ts, ui/hud.ts, ui/menu.ts
 ```

@@ -82,11 +82,14 @@ export class EnemyAi {
   enemies: Enemy[] = [];
   private map: GameMap;
   private obstacles: Obstacles;
+  private viewRange: number;
   private time = 0;
 
-  constructor(map: GameMap, obstacles: Obstacles) {
+  /** `visibility` (0..1, from the weather) shortens how far they can see in heavy snow. */
+  constructor(map: GameMap, obstacles: Obstacles, visibility = 1) {
     this.map = map;
     this.obstacles = obstacles;
+    this.viewRange = VIEW_RANGE * visibility;
     this.reset();
   }
 
@@ -182,12 +185,12 @@ export class EnemyAi {
       const dx = p.pos.x - e.pos.x, dz = p.pos.z - e.pos.z, dist = Math.hypot(dx, dz);
       const speed = Math.hypot(p.vel.x, p.vel.z);
       let rate = 0;
-      if (dist < VIEW_RANGE) {
+      if (dist < this.viewRange) {
         const angle = Math.acos(Math.max(-1, Math.min(1, (dx * fx + dz * fz) / Math.max(dist, 1e-6))));
         if (angle < VIEW_HALF_ANGLE || dist < 3) {
           const vis = Math.max(this.obstacles.see(from, chestOf(p)), this.obstacles.see(from, headOf(p)));
           if (vis > 0) {
-            const distF = Math.max(0, 1 - (dist - 12) / (VIEW_RANGE - 12)) ** 2.2; // far away takes a lot longer
+            const distF = Math.max(0, 1 - (dist - 12) / (this.viewRange - 12)) ** 2.2; // far away takes a lot longer
             const fovF = angle < 0.6 ? 1 : 0.45;
             const moveF = speed > 4 ? 1.6 : speed > 0.5 ? 1 : 0.4; // keeping still is the best camouflage
             rate = DETECT_RATE * Math.min(1, distF) * fovF * moveF * STANCE_SEEN[p.stance] * vis;

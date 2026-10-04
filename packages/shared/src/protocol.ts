@@ -4,7 +4,7 @@ import { AI_STATES, type EnemyView } from './ai.ts';
 
 // Network messages. Rare messages are JSON; the 20 Hz soldier state is a 36-byte binary packet.
 
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 export const DEFAULT_PORT = 8080;
 export const STATE_HZ = 20;
 export const MAX_PLAYERS = 8;
@@ -44,7 +44,7 @@ export type ClientMsg =
   | { t: 'hit'; shot: number; target: number; zone: HitZone; point: Vec3; dir: Vec3 }; // shooter-detected; target is a player or an enemy id
 
 export type ServerMsg =
-  | { t: 'welcome'; id: number; seed: number; players: PlayerInfo[]; phase: Phase; spawn: number }
+  | { t: 'welcome'; id: number; seed: number; players: PlayerInfo[]; phase: Phase; spawn: number; time: number } // time: s into the mission (for the wind)
   | { t: 'reject'; reason: string }
   | { t: 'lobby'; players: PlayerInfo[]; phase: Phase; countdown: number; seed: number } // seed: this (or the next) mission's map
   | { t: 'spawn'; spawn: number } // go to this spawn point now (mission start)

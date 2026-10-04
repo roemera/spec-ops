@@ -25,6 +25,7 @@ export const STANCE_LIST: Stance[] = ['stand', 'crouch', 'prone'];
 export const BULLET_SPEED = 600; // m/s muzzle velocity: slow enough that drop and lead matter at 200+ m
 export const GRAVITY = 9.81;
 export const BULLET_LIFETIME = 2; // s before a bullet that hit nothing is removed
+export const WIND_DRIFT = 1; // m/s^2 sideways push on a bullet per m/s of wind (5 m/s crosswind: ~0.5 m at 300 m)
 export const MAG_SIZE = 5;
 export const SPARE_MAGS = 4; // magazines carried besides the loaded one
 export const BOLT_TIME = 1.1; // s between shots (working the bolt)

@@ -3,12 +3,13 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import {
   BULLET_SPEED, BREATH_RECOVER, ENEMY_ID_BASE, GRAVITY, HIP_SPREAD, HOLD_BREATH, Health, PHYSICS_HZ, RECOIL_PITCH,
   EXTRACT_RADIUS, RECOIL_SETTLE, REVIVE_RANGE, REVIVE_TIME, SCOPE_FOV, SCOPE_IN_TIME, SPAWN_PROTECTION, STATE_HZ, SWAY,
-  ZONE_LABEL, generateMap, type Life,
+  ZONE_LABEL, generateMap, weatherFor, windAt, type Life,
   type Phase, type Score, type ServerMsg, type Stance,
 } from '@spec-ops/shared';
 import { Pipeline } from './render/pipeline';
 import { PAL } from './render/palette';
 import { World } from './world';
+import { Snowfall } from './render/snow';
 import { PlayerSim, type MoveInput } from './sim/player';
 import { Rifle } from './sim/rifle';
 import { Bullets, type Bullet, type SoldierHit } from './sim/bullets';
@@ -93,7 +94,13 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   const physics = new RAPIER.World({ x: 0, y: -GRAVITY, z: 0 });
   physics.timestep = STEP;
   const map = generateMap(seed);
-  const world = new World(map, physics);
+  // This mission's weather (from the seed, like the map): wind gusts by mission time, the same on every client.
+  const weather = weatherFor(seed);
+  let missionClock = welcome.time; // s into the mission
+  const calmOverride = { on: false }; // tests: no wind
+  const wind = () => (calmOverride.on ? { x: 0, z: 0 } : windAt(weather, missionClock));
+  const world = new World(map, physics, weather);
+  const snow = new Snowfall(world.scene, weather.snow);
 
   const spawn = map.spawns[welcome.spawn];
   const player = new PlayerSim(physics, spawn, map.heightAt(spawn.x, spawn.z));
@@ -112,8 +119,8 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
 
   const fx = new Fx(world.scene, map.heightAt);
   const audio = new Audio();
-  const wind = audio.loop('wind');
-  wind.setVolume(0.25);
+  // The wind's sound comes from upwind, louder the harder it blows.
+  const windSound = audio.loop('wind', new THREE.Vector3());
   const remotes = new Remotes(world.scene, audio);
   const enemies = new Enemies(world.scene, audio, fx);
   let phase: Phase = welcome.phase;
@@ -146,7 +153,10 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   function brief() {
     const p = player.pos, e = map.extract;
     const dist = Math.round(Math.hypot(e.x - p.x, e.z - p.z) / 10) * 10;
-    say(`EXTRACTION  ${bearingName(e.x - p.x, e.z - p.z)}  ${dist} M  ·  FOLLOW THE ORANGE SMOKE`, HUD_COLORS.signal, BRIEFING_TIME);
+    const strength = weather.windSpeed < 2.5 ? 'LIGHT' : weather.windSpeed < 5.5 ? 'STEADY' : 'STRONG';
+    const fromBearing = (weather.windFrom * 180) / Math.PI;
+    const from = ['NORTH', 'NORTHEAST', 'EAST', 'SOUTHEAST', 'SOUTH', 'SOUTHWEST', 'WEST', 'NORTHWEST'][Math.round(fromBearing / 45) % 8];
+    say(`EXTRACTION  ${bearingName(e.x - p.x, e.z - p.z)}  ${dist} M  ·  FOLLOW THE ORANGE SMOKE  ·  WIND ${strength} FROM THE ${from}`, HUD_COLORS.signal, BRIEFING_TIME);
   }
   /** The server ends the mission when everyone standing is on the pad; until then, say who we wait for. */
   function onThePad() {
@@ -174,6 +184,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       fx.impact(point, normal, point.y > map.heightAt(point.x, point.z) + 0.3 ? PAL.rock : PAL.snow);
       audio.play('impact', { pos: point, volume: 0.6 });
     },
+    wind,
   );
 
   let lastHit: { target: number; zone: string; range: number } | null = null;
@@ -287,6 +298,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
         const sp = map.spawns[msg.spawn];
         player.teleport(sp, map.heightAt(sp.x, sp.z));
         rifle.reset();
+        missionClock = 0;
         brief();
       } else if (msg.t === 'left') {
         remotes.remove(msg.id);
@@ -571,7 +583,14 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     placeCamera(acc / STEP);
     placeViewmodel(dt);
     world.followShadow(feet);
-    world.update(dt);
+    if (playing()) missionClock += dt;
+    const w = wind();
+    world.update(dt, w);
+    snow.update(dt, camera, w, viewCanvas.height);
+    const windSpeed = Math.hypot(w.x, w.z);
+    windSound.setPosition(camera.position.clone().add(new THREE.Vector3(-w.x, 0.3 * windSpeed, -w.z).normalize().multiplyScalar(20)));
+    windSound.setVolume(0.15 + Math.min(0.9, windSpeed * 0.1));
+    windSound.setRate(0.8 + Math.min(0.5, windSpeed * 0.05));
     fx.syncTrails(bullets.live);
     fx.update(dt);
     audio.setListener(camera);
@@ -611,7 +630,9 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
 
   // Handle for debugging and automated checks.
   (window as unknown as { __game: unknown }).__game = {
-    THREE, player, rifle, map, physics, world, enemies, remotes, bullets, fire, net, camera, sway, health,
+    THREE, player, rifle, map, physics, world, enemies, remotes, bullets, fire, net, camera, sway, health, weather, wind,
+    /** Tests: no wind, so aimAt lands exactly. */
+    setCalm(on: boolean) { calmOverride.on = on; },
     /** Hold the scope / hold breath in tests (headless has no right mouse). */
     setScoped(on: boolean | null) { scopeOverride = on; },
     setHoldBreath(on: boolean) { breathOverride = on; },

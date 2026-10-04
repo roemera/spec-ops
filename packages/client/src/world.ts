@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { FOG_FAR, FOG_NEAR, SHADOW_RANGE, SURFACE, type GameMap, type MapObject, makeRng } from '@spec-ops/shared';
+import { FOG_FAR, FOG_NEAR, SHADOW_RANGE, SURFACE, type GameMap, type MapObject, type Weather, makeRng } from '@spec-ops/shared';
 import { PAL, flatShared } from './render/palette';
 
 const SUN_DIR = new THREE.Vector3(0.45, 0.8, 0.3).normalize();
@@ -28,9 +28,10 @@ export class World {
   private smoke: Array<{ mesh: THREE.Mesh; mat: THREE.MeshLambertMaterial; age: number }> = [];
   private smokeBase = new THREE.Vector3();
 
-  constructor(readonly map: GameMap, readonly physics: RAPIER.World) {
+  constructor(readonly map: GameMap, readonly physics: RAPIER.World, weather: Weather) {
     this.scene.background = new THREE.Color(PAL.horizon);
-    this.scene.fog = new THREE.Fog(PAL.horizon, FOG_NEAR, FOG_FAR);
+    // Heavy snow closes the fog in (the enemy's view range shrinks by the same factor).
+    this.scene.fog = new THREE.Fog(PAL.horizon, FOG_NEAR * weather.visibility, FOG_FAR * weather.visibility);
     this.scene.add(new THREE.HemisphereLight(0xffffff, PAL.snowShade, 1.5));
     this.sun = new THREE.DirectionalLight(0xfffaf0, 2.1);
     this.sun.castShadow = true;
@@ -265,12 +266,13 @@ export class World {
     }
   }
 
-  update(dt: number) {
+  /** `wind` (m/s) bends the extraction smoke over: another way to read it. */
+  update(dt: number, wind: { x: number; z: number }) {
     for (const s of this.smoke) {
       s.age = (s.age + dt) % SMOKE_LIFE;
       const k = s.age / SMOKE_LIFE;
-      // Rises, swells and leans downwind as it thins out.
-      s.mesh.position.copy(this.smokeBase).add(new THREE.Vector3(k * k * 24, s.age * SMOKE_RISE, k * k * 8));
+      // Rises, swells and leans further downwind the older it gets.
+      s.mesh.position.copy(this.smokeBase).add(new THREE.Vector3(wind.x * s.age * k, s.age * SMOKE_RISE, wind.z * s.age * k));
       s.mesh.scale.setScalar(0.6 + k * 7);
       s.mesh.rotation.set(s.age * 0.3, s.age * 0.2, 0);
       s.mat.opacity = 0.85 * Math.min(1, s.age * 3) * (1 - k);
