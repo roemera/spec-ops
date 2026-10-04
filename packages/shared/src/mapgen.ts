@@ -120,16 +120,17 @@ export function generateMap(seed: number): GameMap {
   const n = MAP_CELLS + 1, step = MAP_SIZE / MAP_CELLS;
   const heights = new Float32Array(n * n);
   const rawHeight = (x: number, z: number) => {
-    let h = (noise(x / 220 + 10, z / 220 + 10, 4) - 0.5) * 30; // rolling hills
+    let h = (noise(x / 220 + 10, z / 220 + 10, 4) - 0.5) * 50; // big rolling hills
+    h += (noise(x / 70 + 30, z / 70 + 30, 3) - 0.5) * 16; // knolls and hollows between them
     // Rocky ridges where the mask allows, kept off the route so there is always a way through.
     const ridge = 1 - Math.abs(2 * noise(x / 130 + 50, z / 130 + 50, 3) - 1);
-    const mask = smoothstep(0.4, 0.62, noise(x / 300 + 90, z / 300 + 90, 2));
-    h += ridge ** 3 * 28 * mask * smoothstep(14, 70, toRoute(x, z));
+    const mask = smoothstep(0.32, 0.58, noise(x / 300 + 90, z / 300 + 90, 2));
+    h += ridge ** 3 * 38 * mask * smoothstep(14, 70, toRoute(x, z));
     // Mountains all round: the map's edge.
     const e = Math.max(Math.abs(x), Math.abs(z));
     if (e > half - RIM) {
       const k = (e - (half - RIM)) / RIM;
-      h += k * k * 70 + k * (noise(x / 25, z / 25, 3) - 0.5) * 24;
+      h += k * k * 100 + k * (noise(x / 25, z / 25, 3) - 0.5) * 24;
     }
     // The creek: a flat-bottomed channel, starting where it comes out of the mountains.
     const c = toCreek(x, z);
@@ -209,7 +210,7 @@ export function generateMap(seed: number): GameMap {
       const x = gx + rng.range(0.1, 0.9) * TREE_CELL, z = gz + rng.range(0.1, 0.9) * TREE_CELL;
       const roll = rng.next(), hRoll = rng.next(), kindRoll = rng.next(), rot = rng.next();
       if (!inBounds(x, z, 8) || inClearing(x, z, 3) || toCreek(x, z) < CREEK_HALF + 1.5) continue;
-      let p = smoothstep(0.36, 0.62, forest(x, z)) * 0.88 + 0.03;
+      let p = smoothstep(0.37, 0.64, forest(x, z)) * 0.78 + 0.03;
       if (toRoute(x, z) < 5) p *= 0.3;
       if (slopeAt(x, z) > 0.9) p *= 0.15;
       if (Math.max(Math.abs(x), Math.abs(z)) > half - RIM * 0.4) p *= 0.4; // thin out high on the mountains

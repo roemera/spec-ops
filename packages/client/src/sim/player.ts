@@ -32,6 +32,7 @@ export class PlayerSim {
   pitch = 0;
   readonly vel = new THREE.Vector3();
   grounded = false;
+  private onSteep = false;
   /** Metres walked, for footsteps and the walk cycle. */
   distance = 0;
 
@@ -123,18 +124,31 @@ export class PlayerSim {
     this.vel.z += dz * k;
 
     if (this.grounded && input.jump && this.stance === 'stand') this.vel.y = JUMP_SPEED;
-    this.vel.y -= GRAVITY * dt;
+    else if (this.grounded && !this.onSteep) this.vel.y = 0;
+    else this.vel.y -= GRAVITY * dt;
 
+    // On walkable ground, move flat: the controller climbs slopes and snaps you down them. Pushing
+    // down as well makes it drag you to a crawl going uphill. Too steep: gravity, so you slide.
     const want = { x: this.vel.x * dt, y: this.vel.y * dt, z: this.vel.z * dt };
     this.controller.computeColliderMovement(this.collider, want, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS);
     const moved = this.controller.computedMovement();
     this.grounded = this.controller.computedGrounded();
-    // Blocked sideways: lose that speed. On the ground: stop falling.
-    if (dt > 0) {
+    // Standing on something steeper than you can climb? Read the ground's tilt straight below.
+    let ny = 1;
+    if (this.grounded) {
+      const hit = this.world.castRayAndGetNormal(
+        new RAPIER.Ray({ x: this.pos.x + moved.x, y: this.pos.y + moved.y + 0.3, z: this.pos.z + moved.z }, { x: 0, y: -1, z: 0 }),
+        0.8, true, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, undefined, undefined, this.body,
+      );
+      if (hit) ny = hit.normal.y;
+    }
+    this.onSteep = this.grounded && ny < Math.cos(MAX_SLOPE);
+    // In the air, blocked sideways: lose that speed. (On the ground the wanted speed takes over
+    // within a step anyway, and keeping it means a slope doesn't bleed you to a crawl.)
+    if (dt > 0 && !this.grounded) {
       this.vel.x = moved.x / dt;
       this.vel.z = moved.z / dt;
     }
-    if (this.grounded && this.vel.y < 0) this.vel.y = -1;
     if (this.vel.y > 0 && moved.y < want.y - 1e-4) this.vel.y = 0; // head hit something
     this.pos.set(this.pos.x + moved.x, this.pos.y + moved.y, this.pos.z + moved.z);
     this.body.setNextKinematicTranslation(this.pos);

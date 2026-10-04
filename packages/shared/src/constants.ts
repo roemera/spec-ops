@@ -8,7 +8,7 @@ export const PRONE_SPEED = 0.7;
 export const JUMP_SPEED = 4.2; // m/s upward, standing only
 export const ACCEL = 30; // m/s^2 toward the wanted speed on the ground
 export const AIR_ACCEL = 4; // m/s^2 in the air
-export const MAX_SLOPE = (50 * Math.PI) / 180; // steeper than this, you slide
+export const MAX_SLOPE = (62 * Math.PI) / 180; // steeper than this, you slide (bare cliffs and the mountains round the map)
 export const STANCE_TIME = 0.25; // s to change stance (eye height eases over this)
 
 // Body: capsule radius, and per-stance height (feet to top) and eye height.
