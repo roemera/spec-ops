@@ -7,7 +7,7 @@ import { makeRng } from '@spec-ops/shared';
 export const RATE = 44100;
 const SPEED_OF_SOUND = 343; // m/s
 
-export type SoundName = 'shot' | 'bolt' | 'reload' | 'dry' | 'step' | 'impact' | 'hit' | 'shatter' | 'wind' | 'shout' | 'huh' | 'hurt' | 'headshot' | 'magIn' | 'perfect' | 'jam' | 'pickup';
+export type SoundName = 'shot' | 'bolt' | 'reload' | 'dry' | 'step' | 'impact' | 'hit' | 'shatter' | 'wind' | 'shout' | 'huh' | 'hurt' | 'headshot' | 'magIn' | 'perfect' | 'jam' | 'pickup' | 'slide';
 
 type Gen = (t: number, rnd: () => number) => number;
 
@@ -173,6 +173,21 @@ export const GENERATORS: Record<SoundName, SoundDef> = {
       };
     },
   },
+  // Sliding into the snow: a hiss of packed grains under the body, fading as you slow, a few
+  // gear rattles, and a thump as you go down.
+  slide: {
+    seconds: 0.9,
+    gen: () => {
+      const hiss = lowpass(0.25), low = lowpass(0.03), cloth = lowpass(0.08);
+      return (t, r) => {
+        const n = r() * 2 - 1;
+        const env = Math.min(1, t / 0.04) * Math.exp(-t * 3.2);
+        const grains = hiss(n) * (0.7 + 0.5 * Math.sin(t * 47 + 3 * Math.sin(t * 13))) * 2.2 * env;
+        const thump = low(n) * 5 * Math.exp(-t * 22);
+        return grains + thump + cloth(n) * 1.5 * Math.exp(-t * 6) + clank(t, 0.08, 1500, 80, 0.15, r) + clank(t, 0.21, 1900, 90, 0.1, r);
+      };
+    },
+  },
   // Dry fire: the firing pin snaps on an empty chamber.
   dry: {
     seconds: 0.15,
@@ -243,16 +258,34 @@ export const GENERATORS: Record<SoundName, SoundDef> = {
       };
     },
   },
-  // Loopable wind: slow swells of filtered noise, wrapping around after 4 s.
+  // Loopable wind, 12 s: irregular gusts (several slow swells that don't line up, so it doesn't
+  // breathe like surf), a hiss through the pines that brightens as a gust builds, and a thin howl
+  // whose pitch rises with it. Every modulation fits a whole number of times into 12 s, so it loops.
   wind: {
-    seconds: 4,
+    seconds: 12,
     gen: () => {
-      let lp = 0, lp2 = 0;
+      const L = 12;
+      const hissHi = lowpass(0.5), hissLo = lowpass(0.04), rumble = lowpass(0.004);
+      // Two resonant band-passes (state-variable filters) for the howl.
+      const howl = (q: number) => {
+        let low = 0, band = 0;
+        return (x: number, fc: number) => {
+          const f = 2 * Math.sin((Math.PI * fc) / RATE);
+          low += f * band;
+          const high = x - low - q * band;
+          band += f * high;
+          return band;
+        };
+      };
+      const h1 = howl(0.04), h2 = howl(0.06);
+      const w = (k: number, t: number, ph: number) => Math.sin((2 * Math.PI * k * t) / L + ph);
       return (t, r) => {
-        lp += 0.02 * (r() * 2 - 1 - lp);
-        lp2 += 0.05 * (lp - lp2);
-        const swell = 0.6 + 0.4 * Math.sin((2 * Math.PI * t) / 4);
-        return lp2 * 14 * swell;
+        const n = r() * 2 - 1;
+        const g0 = 0.5 + 0.22 * w(1, t, 1.3) + 0.16 * w(3, t, 0.4) + 0.1 * w(5, t, 2.2) + 0.05 * w(23, t, 0.9) + 0.03 * w(41, t, 2.7);
+        const gust = Math.max(0, g0) ** 1.6; // peaky: lulls, then a gust
+        const hiss = (hissHi(n) - hissLo(n)) * (0.25 + 0.9 * gust);
+        const tone = (h1(n, 380 + 420 * gust) * 0.05 + h2(n, 610 + 520 * gust) * 0.035) * gust;
+        return (hiss * 1.6 + tone + rumble(n) * 6 * (0.3 + gust)) * 1.1;
       };
     },
   },

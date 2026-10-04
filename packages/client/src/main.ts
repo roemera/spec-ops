@@ -442,6 +442,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   }
 
   // --- Input ---
+  let sprintStands = true; // Shift + W stands you up (off until Shift is pressed again after a slide)
   const move: MoveInput = { forward: 0, right: 0, sprint: false, jump: false, scoped: false };
   let wantScope = false;
 
@@ -486,11 +487,22 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       }
       return;
     }
+    const shift = input.isHeld('ShiftLeft') || input.isHeld('ShiftRight');
+    move.forward = (input.isHeld('KeyW') ? 1 : 0) - (input.isHeld('KeyS') ? 1 : 0);
+    move.right = (input.isHeld('KeyD') ? 1 : 0) - (input.isHeld('KeyA') ? 1 : 0);
+    wantScope = scopeOverride ?? (input.locked && input.mouseButtons.has(2));
+    move.sprint = shift && !wantScope;
     for (const code of input.takePresses()) {
       audio.unlock();
       // C: crouch (or up from prone to a crouch). Z: prone, or back up. Space: jump, or stand up.
-      if (code === 'KeyC') player.setStance(player.stance === 'crouch' ? 'stand' : 'crouch');
-      if (code === 'KeyZ') player.setStance(player.stance === 'prone' ? 'stand' : 'prone') || player.setStance('crouch');
+      // Either while sprinting: a slide on your knees, or a dive onto your belly.
+      if (code === 'ShiftLeft' || code === 'ShiftRight') sprintStands = true;
+      const sprinting = move.sprint && move.forward > 0 && player.stance === 'stand';
+      if ((code === 'KeyC' || code === 'KeyZ') && sprinting && player.startSlide(code === 'KeyC' ? 'crouch' : 'prone')) {
+        sprintStands = false; // still holding Shift after the slide: stay down until it's pressed again
+        audio.play('slide', { volume: code === 'KeyC' ? 0.5 : 0.65 });
+      } else if (code === 'KeyC') player.setStance(player.stance === 'crouch' ? 'stand' : 'crouch');
+      else if (code === 'KeyZ') player.setStance(player.stance === 'prone' ? 'stand' : 'prone') || player.setStance('crouch');
       if (code === 'Space') {
         if (player.stance === 'stand') move.jump = true;
         else player.setStance('stand');
@@ -500,13 +512,9 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
         else if (rifle.reload()) audio.play('reload');
       }
     }
-    const shift = input.isHeld('ShiftLeft') || input.isHeld('ShiftRight');
-    move.forward = (input.isHeld('KeyW') ? 1 : 0) - (input.isHeld('KeyS') ? 1 : 0);
-    move.right = (input.isHeld('KeyD') ? 1 : 0) - (input.isHeld('KeyA') ? 1 : 0);
-    wantScope = scopeOverride ?? (input.locked && input.mouseButtons.has(2));
-    move.sprint = shift && !wantScope;
-    // Sprinting gets you up off your belly or knees (if there's room).
-    if (move.sprint && move.forward > 0 && player.stance !== 'stand') player.setStance('stand');
+    // Sprinting gets you up off your belly or knees (if there's room), but not out of a slide, and
+    // not straight after one while Shift is still held from the sprint.
+    if (sprintStands && move.sprint && move.forward > 0 && player.stance !== 'stand' && player.slide <= 0) player.setStance('stand');
     move.scoped = wantScope;
 
     const clicks = input.takeClicks();

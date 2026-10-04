@@ -74,7 +74,7 @@ friendly fire and no respawning:
   3 s gets you up with 50 health (they can't move or shoot meanwhile).
 - If you bleed out you are **out** until the next mission.
 - Health does not come back by itself. Medkits (+40) and a teammate's revive are the only way back.
-- Ammo runs out: you start with a full magazine and 15 spare rounds (carry up to 40). Each base has an
+- Ammo runs out: you start with a full magazine and 15 spare rounds (carry up to 25). Each base has an
   ammo box (15 rounds) and a medkit by a hut door; every enemy you kill drops 6 rounds, and about a
   third carry a medkit. Walk over one to take it; whoever gets there first has it.
 
@@ -118,7 +118,7 @@ panel (for headless checks).
 | WASD | Move |
 | Shift | Sprint (gets you up from crouch or prone); while scoped, hold your breath (4 s, then you are winded and sway more) |
 | Space | Jump; from crouch or prone, stand up |
-| C / Z | Crouch / prone (press again to stand) |
+| C / Z | Crouch / prone (press again to stand). While sprinting: slide on your knees / dive onto your belly |
 | Right mouse (hold) | Scope (12x). Sway is smallest prone, largest standing or moving |
 | Left mouse | Fire. Work the bolt after every shot (1.1 s) |
 | R | Reload (5-round magazine, from your spare rounds). Press R again while the needle is in the red to slap it home at once; near it, a quick finish; anywhere else it jams (+1.2 s) |

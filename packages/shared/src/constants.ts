@@ -9,6 +9,13 @@ export const JUMP_SPEED = 4.2; // m/s upward, standing only
 export const ACCEL = 30; // m/s^2 toward the wanted speed on the ground
 export const AIR_ACCEL = 4; // m/s^2 in the air
 export const MAX_SLOPE = (62 * Math.PI) / 180; // steeper than this, you slide (bare cliffs and the mountains round the map)
+// Slide: C (crouch) or Z (prone, a dive) while sprinting carries you on, slowing to the stance's
+// speed over the time.
+export const SLIDE = {
+  crouch: { speed: 7.2, time: 0.9 },
+  prone: { speed: 6.4, time: 0.6 },
+} as const;
+export const SLIDE_MIN_SPEED = 4.5; // m/s: going at least this fast to slide
 export const STANCE_TIME = 0.25; // s to change stance (eye height eases over this)
 
 // Body: capsule radius, and per-stance height (feet to top) and eye height.
@@ -29,7 +36,7 @@ export const WIND_DRIFT = 1; // m/s^2 sideways push on a bullet per m/s of wind 
 export const MAG_SIZE = 5;
 // Ammo is limited: spare rounds come from ammo boxes at the bases and off the dead.
 export const START_SPARE = 15; // rounds carried besides the loaded magazine
-export const MAX_SPARE = 40;
+export const MAX_SPARE = 25;
 export const AMMO_BOX = 15; // rounds in a base's ammo box
 export const AMMO_DROP = 6; // rounds off a body
 export const MEDKIT_DROP_CHANCE = 0.35; // a body carries a medkit

@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import {
-  ACCEL, AIR_ACCEL, BODY_RADIUS, CROUCH_SPEED, GRAVITY, JUMP_SPEED, MAX_SLOPE, PRONE_SPEED, SPRINT_SPEED, STANCES,
+  ACCEL, AIR_ACCEL, BODY_RADIUS, CROUCH_SPEED, GRAVITY, JUMP_SPEED, MAX_SLOPE, PRONE_SPEED, SLIDE, SLIDE_MIN_SPEED, SPRINT_SPEED, STANCES,
   STANCE_TIME, WALK_SPEED, type Spawn, type Stance,
 } from '@spec-ops/shared';
 
@@ -33,6 +33,9 @@ export class PlayerSim {
   readonly vel = new THREE.Vector3();
   grounded = false;
   private onSteep = false;
+  /** s left of a slide (crouch) or dive (prone) out of a sprint; 0 when not sliding. */
+  slide = 0;
+  private slideDecel = 0; // m/s^2 the slide slows by
   /** Metres walked, for footsteps and the walk cycle. */
   distance = 0;
 
@@ -82,6 +85,21 @@ export class PlayerSim {
     return true;
   }
 
+  /**
+   * Drop into a crouch slide or a prone dive, keeping the sprint's direction at a burst of speed.
+   * Only on the ground, standing and going fast; returns whether it started.
+   */
+  startSlide(stance: 'crouch' | 'prone'): boolean {
+    const v = this.speed;
+    if (!this.grounded || this.stance !== 'stand' || v < SLIDE_MIN_SPEED || !this.setStance(stance)) return false;
+    const { speed, time } = SLIDE[stance];
+    this.vel.x *= speed / v;
+    this.vel.z *= speed / v;
+    this.slide = time;
+    this.slideDecel = (speed - (stance === 'prone' ? PRONE_SPEED : CROUCH_SPEED)) / time;
+    return true;
+  }
+
   /** Move to a spawn point now (no interpolation from where we were). */
   teleport(spawn: Spawn, groundY: number) {
     this.body.setTranslation({ x: spawn.x, y: groundY + 0.05, z: spawn.z }, true);
@@ -91,6 +109,7 @@ export class PlayerSim {
     this.vel.set(0, 0, 0);
     this.yaw = spawn.rotY;
     this.pitch = 0;
+    this.slide = 0;
     this.setStance('stand');
   }
 
@@ -117,11 +136,23 @@ export class PlayerSim {
     }
     wx *= speed;
     wz *= speed;
-    const accel = (this.grounded ? ACCEL : AIR_ACCEL) * dt;
-    const dx = wx - this.vel.x, dz = wz - this.vel.z, dl = Math.hypot(dx, dz);
-    const k = dl > accel ? accel / dl : 1;
-    this.vel.x += dx * k;
-    this.vel.z += dz * k;
+    if (this.stance === 'stand') this.slide = 0; // jumped or stood up out of it
+    if (this.slide > 0) {
+      // Sliding: no steering, just slowing down. In the air it carries on unslowed.
+      this.slide = Math.max(0, this.slide - dt);
+      const v = this.speed;
+      if (this.grounded && v > 0) {
+        const k = Math.max(0, v - this.slideDecel * dt) / v;
+        this.vel.x *= k;
+        this.vel.z *= k;
+      }
+    } else {
+      const accel = (this.grounded ? ACCEL : AIR_ACCEL) * dt;
+      const dx = wx - this.vel.x, dz = wz - this.vel.z, dl = Math.hypot(dx, dz);
+      const k = dl > accel ? accel / dl : 1;
+      this.vel.x += dx * k;
+      this.vel.z += dz * k;
+    }
 
     if (this.grounded && input.jump && this.stance === 'stand') this.vel.y = JUMP_SPEED;
     else if (this.grounded && !this.onSteep) this.vel.y = 0;
