@@ -112,7 +112,7 @@ export class Remotes {
       // Footsteps when a foot comes down: quieter crouched, almost silent prone.
       if (r.model.pose(down ? 'crouch' : r.stance, down ? -0.6 : pitch, r.walked, speed, dt)) {
         if (r.stance !== 'prone') this.decals.print(pos.x, pos.z, yaw, (r.foot = -r.foot), now);
-        const volume = r.stance === 'stand' ? (speed > 4 ? 1.2 : 0.8) : r.stance === 'crouch' ? 0.35 : 0.12;
+        const volume = r.stance === 'stand' ? (speed > 4 ? 0.6 : 0.4) : r.stance === 'crouch' ? 0.18 : 0.06; // teammates are close and many: keep them in the background
         this.audio.play('step', { pos: pos.clone().setY(pos.y + STANCES[r.stance].height * 0.1), volume, rate: 0.9 + Math.random() * 0.2 });
       }
       r.model.root.updateMatrixWorld(true); // hit tests this frame use the new pose

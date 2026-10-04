@@ -75,8 +75,8 @@ friendly fire and no respawning:
 - If you bleed out you are **out** until the next mission.
 - Health does not come back by itself. Medkits (+40) and a teammate's revive are the only way back.
 - Ammo runs out: you start with a full magazine and 15 spare rounds (carry up to 25). Each base has an
-  ammo box (15 rounds) and a medkit by a hut door; every enemy you kill drops 6 rounds, and about a
-  third carry a medkit. Walk over one to take it; whoever gets there first has it.
+  ammo box (15 rounds) and a medkit by a hut door; every enemy you kill drops 6 rounds, and three in
+  five carry a medkit. Walk over one to take it; whoever gets there first has it.
 
 After the results (time, kills, revives, downs, accuracy) everyone goes back to the squad screen with
 a new map. Each page reloads itself to build the new map and rejoins on its own.
