@@ -7,7 +7,7 @@ import { makeRng } from '@spec-ops/shared';
 const RATE = 22050;
 const SPEED_OF_SOUND = 343; // m/s
 
-export type SoundName = 'shot' | 'bolt' | 'reload' | 'dry' | 'step' | 'impact' | 'hit' | 'shatter' | 'wind';
+export type SoundName = 'shot' | 'bolt' | 'reload' | 'dry' | 'step' | 'impact' | 'hit' | 'shatter' | 'wind' | 'shout' | 'huh';
 
 type Gen = (t: number, rnd: () => number) => number;
 
@@ -18,7 +18,35 @@ const click = (t: number, at: number, freq: number, r: () => number) => {
   return ((r() * 2 - 1) * 0.8 + Math.sin(2 * Math.PI * freq * u)) * Math.exp(-u * 90);
 };
 
+/**
+ * A voice-ish buzz: harmonics of a gliding pitch, loudest near two vowel formants (f1, f2).
+ * Not words, just the shape of a shout.
+ */
+const voice = (seconds: number, f0: (t: number) => number, f1: number, f2: number, env: (t: number) => number): Gen => {
+  let phase = 0;
+  return (t, r) => {
+    phase += f0(t) / RATE;
+    let x = 0;
+    for (let k = 1; k <= 24; k++) {
+      const f = k * f0(t);
+      const w = Math.exp(-(((f - f1) / 180) ** 2)) + 0.7 * Math.exp(-(((f - f2) / 260) ** 2));
+      x += w * Math.sin(2 * Math.PI * k * phase);
+    }
+    return (x * 0.5 + (r() * 2 - 1) * 0.06) * env(Math.min(t, seconds));
+  };
+};
+
 const GENERATORS: Record<SoundName, { seconds: number; gen: () => Gen }> = {
+  // An enemy spots you: a sharp, rising-then-falling "HEY!".
+  shout: {
+    seconds: 0.45,
+    gen: () => voice(0.45, (t) => 210 + 90 * Math.sin(Math.min(1, t / 0.4) * Math.PI), 750, 1250, (t) => Math.min(1, t / 0.03) * Math.exp(-((t - 0.15) ** 2) / 0.03)),
+  },
+  // An enemy heard or glimpsed something: a short, low, questioning "huh?".
+  huh: {
+    seconds: 0.35,
+    gen: () => voice(0.35, (t) => 120 + 60 * (t / 0.35), 550, 1000, (t) => Math.min(1, t / 0.04) * Math.exp(-((t - 0.12) ** 2) / 0.02) * 0.8),
+  },
   // Supersonic crack, then a low boom that rolls off.
   shot: {
     seconds: 1.4,

@@ -46,7 +46,7 @@ export interface GameMap {
   extract: Point; // extraction pad: where the mission ends
   route: Point[]; // the rough way through, start to extract (for placing things, never shown)
   outposts: Outpost[];
-  spawns: Spawn[]; // 0-3 at the start; the rest spread out (free-for-all respawns)
+  spawns: Spawn[]; // four side by side at the start
   heightAt(x: number, z: number): number;
 }
 
@@ -230,12 +230,6 @@ export function generateMap(seed: number): GameMap {
   const spawns: Spawn[] = [];
   const right = { x: Math.cos(facing), z: -Math.sin(facing) };
   for (const off of [-1.5, 1.5, -4.5, 4.5]) spawns.push({ x: startPt.x + right.x * off, z: startPt.z + right.z * off, rotY: facing });
-  // Free-for-all respawns, spread along the route (until the match becomes co-op).
-  for (let i = 1; i <= 8; i++) {
-    const p = route[Math.floor((i / 9) * (route.length - 1))];
-    const off = (i % 2 ? 1 : -1) * 35;
-    spawns.push({ ...clampIn({ x: p.x + perp.x * off, z: p.z + perp.z * off }, inner), rotY: rng.range(0, Math.PI * 2) });
-  }
   // Keep spawns clear of objects.
   for (let i = objects.length - 1; i >= 0; i--) {
     const o = objects[i];

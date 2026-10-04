@@ -4,9 +4,9 @@ A browser co-op game: a small squad against AI, in the spirit of the winter snip
 Call of Duty Spec Ops. Clean low poly look (think Superhot).
 
 **Status:** early. You play a soldier with a scoped bolt-action rifle in a procedurally generated snowy
-valley, from the insertion point to the extraction pad. Offline, red stand-in guards (who don't shoot
-back yet) hold the outposts; online it is still the old free-for-all match flow until the AI and
-co-op missions arrive.
+valley, from the insertion point to the extraction pad, past outposts held by enemy soldiers the server
+controls. The match flow (lobby, kill limit, friendly fire) is still the old free-for-all one until
+co-op missions arrive. There is no offline mode: run the server, even to play alone.
 
 Stack: TypeScript, Three.js, Rapier (WebAssembly physics), Vite. Everything (map, models, textures) is generated in code.
 
@@ -30,7 +30,7 @@ The match starts when everyone (2+) is ready, or when the host types `start` in 
 **Developing:** `npm run dev` starts the game server (port 8080) and the Vite dev server together,
 then open http://localhost:5173 (Vite forwards the game connection to 8080). Without a
 server.config.json the password is `changeme`. Press START NOW in the lobby (or type `start` in that terminal) to begin, even solo;
-Ctrl+C stops both. PRACTICE OFFLINE on the join screen plays a new map solo, with stand-in guards at the outposts.
+Ctrl+C stops both.
 
 `npm run dev` and `npm run build` first run `scripts/ensure-native.mjs`, which installs Vite's native
 binaries for your platform if npm skipped them (a known npm bug that shows up on Windows as
@@ -45,11 +45,25 @@ extraction pad on the opposite one (about 450 m away), past two to four outposts
 watchtower, sandbag walls) where the enemy will be. There is no marker: you get a bearing when you
 spawn, and orange smoke rises over the pad.
 
-Offline you get a new map every time (`?seed=123` to replay one; the seed is in `__game.seed`).
-The server picks a random seed when it starts, unless `mapSeed` in the config or `MAP_SEED` is set.
+The server picks a random seed when it starts, unless `mapSeed` in the config or `MAP_SEED` is set
+(the seed is printed when the server starts).
 
-URL options: `?offline` skips the menu, `?join=host:port&name=X&password=Y` joins directly,
-`?seed=123` picks the offline map (otherwise random), `?test` hides the click-to-play panel (for headless checks).
+## The enemy
+
+The server runs the enemy soldiers (`packages/shared/src/ai.ts`, tuning in `constants.ts`): guards
+at every outpost (one up the watchtower if there is one), a patrol round each outpost, and roamers
+walking the route. Each one goes from patrolling to suspicious (stops, turns your way, then walks
+over), to searching (goes where you were and looks around), to alert (shouts so the ones near come
+too, takes a knee and shoots, and runs to where it last saw you if you break line of sight).
+
+They see you sooner close up, standing, moving and in front of them, and much later prone, still,
+far away, at the edge of their view or behind pine branches. They hear footsteps (sprinting most)
+and every rifle shot within 260 m, and anyone who sees a friend go down comes looking. Their aim
+gets better the longer they keep you in sight. You hear them: a "huh?" when one gets suspicious, a
+shout when one spots you, and their boots in the snow. Health comes back 5 s after the last hit.
+
+URL options: `?join=host:port&name=X&password=Y` joins directly, `?test` hides the click-to-play
+panel (for headless checks).
 
 ## Controls
 
@@ -81,12 +95,14 @@ start audio (browser rule).
 ```
 packages/
   shared/   constants.ts (tuning), mapgen.ts (procedural map), rng.ts
-  shared/   hitzones.ts (head/body/limb damage, Health), protocol.ts (messages, 36-byte soldier state)
-  server/   main.ts (http + WebSocket on one port), match.ts (lobby, countdown, spawns, kills), config.ts
+  shared/   hitzones.ts (head/body/limb damage, Health), protocol.ts (messages, 36-byte soldier state,
+            20-byte enemy state), ai.ts (the enemy), obstacles.ts (line of sight and walking round things)
+  server/   main.ts (http + WebSocket on one port, AI tick), match.ts (lobby, countdown, spawns, kills,
+            the enemy), config.ts
   client/   main.ts (loop: input, scope, breath, recoil, camera), sim/player.ts (character controller,
             stances), sim/rifle.ts (magazine, bolt, reload), sim/bullets.ts (ballistics),
             models/ (soldier, rifle), render/ (pipeline, palette), world.ts (terrain, instanced
-            forest, objects, light, smoke), targets.ts (stand-in outpost guards), remotes.ts (other players, interpolated), fx.ts (trails,
+            forest, objects, light, smoke), enemies.ts (the server's enemy, drawn and heard), remotes.ts (other players, interpolated), fx.ts (trails,
             puffs, shatter), audio.ts, net.ts, ui/hud.ts, ui/menu.ts
 ```
 

@@ -27,7 +27,7 @@ const CSS = `
 #menu .note { color: rgba(27,31,35,0.55); font-size: 12px; margin-top: 12px; }
 `;
 
-export type JoinChoice = { mode: 'offline' } | { mode: 'online'; server: string; name: string; password: string };
+export type JoinChoice = { server: string; name: string; password: string };
 
 const store = {
   get: (k: string) => {
@@ -69,7 +69,7 @@ export class Menu {
         <label>YOUR NAME</label><input name="name" maxlength="16" spellcheck="false">
         <label>PASSWORD</label><input name="password" type="password">
         <div class="error"></div>
-        <button type="submit">JOIN</button><button type="button" class="alt">PRACTICE OFFLINE</button>
+        <button type="submit">JOIN</button>
       </form>`;
     const form = this.root.querySelector('form')!;
     const field = (n: string) => form.querySelector<HTMLInputElement>(`input[name=${n}]`)!;
@@ -85,14 +85,13 @@ export class Menu {
     return new Promise((resolve) => {
       form.addEventListener('submit', (e) => {
         e.preventDefault();
-        const choice = { mode: 'online' as const, server: field('server').value.trim(), name: field('name').value.trim(), password: field('password').value };
+        const choice = { server: field('server').value.trim(), name: field('name').value.trim(), password: field('password').value };
         store.set('server', choice.server);
         store.set('name', choice.name);
         store.set('password', choice.password);
         form.querySelector('.error')!.textContent = 'CONNECTING...';
         resolve(choice);
       });
-      form.querySelector('button.alt')!.addEventListener('click', () => resolve({ mode: 'offline' }));
     });
   }
 

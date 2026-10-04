@@ -1,6 +1,6 @@
 import {
-  PROTOCOL_VERSION, decodeState, encodeState,
-  type ClientMsg, type HitZone, type ServerMsg, type SoldierState,
+  PROTOCOL_VERSION, decodeEnemies, decodeState, encodeState,
+  type ClientMsg, type EnemyView, type HitZone, type ServerMsg, type SoldierState,
 } from '@spec-ops/shared';
 
 type Vec3 = [number, number, number];
@@ -11,6 +11,7 @@ type Welcome = Extract<ServerMsg, { t: 'welcome' }>;
 export class Net {
   onMessage: (msg: ServerMsg) => void = () => {};
   onState: (s: SoldierState) => void = () => {};
+  onEnemies: (list: EnemyView[]) => void = () => {};
   onClose: (reason: string) => void = () => {};
   private closedReason = 'connection lost';
 
@@ -18,7 +19,9 @@ export class Net {
     ws.addEventListener('message', (e) => {
       if (e.data instanceof ArrayBuffer) {
         const s = decodeState(e.data);
-        if (s) this.onState(s);
+        if (s) return this.onState(s);
+        const list = decodeEnemies(e.data);
+        if (list) this.onEnemies(list);
       } else this.onMessage(JSON.parse(e.data));
     });
     ws.addEventListener('close', () => this.onClose(this.closedReason));
@@ -71,8 +74,8 @@ export class Net {
     this.send({ t: 'fire', shot, pos, vel });
   }
 
-  sendHit(shot: number, target: number, zone: HitZone, point: Vec3) {
-    this.send({ t: 'hit', shot, target, zone, point });
+  sendHit(shot: number, target: number, zone: HitZone, point: Vec3, dir: Vec3) {
+    this.send({ t: 'hit', shot, target, zone, point, dir });
   }
 
   sendState(s: SoldierState) {

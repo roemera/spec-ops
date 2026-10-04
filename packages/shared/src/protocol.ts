@@ -1,9 +1,10 @@
 import { STANCE_LIST, type Stance } from './constants.ts';
 import type { HitZone } from './hitzones.ts';
+import { AI_STATES, type EnemyView } from './ai.ts';
 
 // Network messages. Rare messages are JSON; the 20 Hz soldier state is a 36-byte binary packet.
 
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 export const DEFAULT_PORT = 8080;
 export const STATE_HZ = 20;
 export const MAX_PLAYERS = 8;
@@ -34,7 +35,7 @@ export type ClientMsg =
   | { t: 'ready'; ready: boolean }
   | { t: 'start' } // anyone in the lobby can start the match now
   | { t: 'fire'; shot: number; pos: Vec3; vel: Vec3 }
-  | { t: 'hit'; shot: number; target: number; zone: HitZone; point: Vec3 }; // shooter-detected
+  | { t: 'hit'; shot: number; target: number; zone: HitZone; point: Vec3; dir: Vec3 }; // shooter-detected; target is a player or an enemy id
 
 export type ServerMsg =
   | { t: 'welcome'; id: number; seed: number; players: PlayerInfo[]; phase: Phase; spawn: number }
@@ -42,10 +43,11 @@ export type ServerMsg =
   | { t: 'lobby'; players: PlayerInfo[]; phase: Phase; countdown: number }
   | { t: 'spawn'; spawn: number } // go to this spawn point now (match start)
   | { t: 'left'; id: number }
-  | { t: 'fire'; from: number; shot: number; pos: Vec3; vel: Vec3 }
+  | { t: 'fire'; from: number; shot: number; pos: Vec3; vel: Vec3 } // from: a player or an enemy id
   | { t: 'damage'; target: number; attacker: number; zone: HitZone; damage: number; health: number; point: Vec3 }
   | { t: 'kill'; victim: number; killer: number; zone: HitZone; scores: Score[] }
   | { t: 'respawn'; id: number } // that player is back (stand their body up again)
+  | { t: 'enemyDown'; id: number; killer: number; zone: HitZone; dir: Vec3; scores: Score[] } // an enemy was killed
   | { t: 'results'; scores: Score[]; winner: number; seconds: number };
 
 // --- Binary soldier state ---
@@ -90,4 +92,49 @@ export function decodeState(data: ArrayBuffer | Uint8Array): SoldierState | null
     yaw: f(6),
     pitch: f(7),
   };
+}
+
+// --- Binary enemy state (server -> clients, AI_HZ) ---
+
+export const ENEMY_BYTES = 20;
+const KIND_ENEMIES = 2;
+
+export function encodeEnemies(list: EnemyView[]): ArrayBuffer {
+  const buf = new ArrayBuffer(4 + list.length * ENEMY_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, KIND_ENEMIES);
+  v.setUint8(1, list.length);
+  list.forEach((e, i) => {
+    const o = 4 + i * ENEMY_BYTES;
+    v.setUint8(o, e.id);
+    v.setUint8(o + 1, STANCE_LIST.indexOf(e.stance) | (AI_STATES.indexOf(e.state) << 2) | (e.dead ? 16 : 0));
+    v.setInt16(o + 2, Math.round(e.pitch * 1000), true);
+    v.setFloat32(o + 4, e.pos.x, true);
+    v.setFloat32(o + 8, e.pos.y, true);
+    v.setFloat32(o + 12, e.pos.z, true);
+    v.setFloat32(o + 16, e.yaw, true);
+  });
+  return buf;
+}
+
+export function decodeEnemies(data: ArrayBuffer | Uint8Array): EnemyView[] | null {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  if (bytes.byteLength < 4 || bytes[0] !== KIND_ENEMIES) return null;
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const n = v.getUint8(1);
+  if (bytes.byteLength !== 4 + n * ENEMY_BYTES) return null;
+  const out: EnemyView[] = [];
+  for (let i = 0; i < n; i++) {
+    const o = 4 + i * ENEMY_BYTES, flags = v.getUint8(o + 1);
+    out.push({
+      id: v.getUint8(o),
+      stance: STANCE_LIST[flags & 3] ?? 'stand',
+      state: AI_STATES[(flags >> 2) & 3],
+      dead: (flags & 16) !== 0,
+      pitch: v.getInt16(o + 2, true) / 1000,
+      pos: { x: v.getFloat32(o + 4, true), y: v.getFloat32(o + 8, true), z: v.getFloat32(o + 12, true) },
+      yaw: v.getFloat32(o + 16, true),
+    });
+  }
+  return out;
 }

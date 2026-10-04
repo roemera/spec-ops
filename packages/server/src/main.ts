@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { PROTOCOL_VERSION, STATE_BYTES, decodeState, type ClientMsg, type ServerMsg } from '@spec-ops/shared';
+import { AI_HZ, PROTOCOL_VERSION, STATE_BYTES, decodeState, type ClientMsg, type ServerMsg } from '@spec-ops/shared';
 import { loadConfig } from './config.ts';
 import { serveStatic } from './static.ts';
 import { Match, type Player } from './match.ts';
@@ -23,6 +23,7 @@ wss.on('connection', (ws: WebSocket, req) => {
   let player: Player | null = null;
   let alive = true;
   const send = (msg: ServerMsg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
+  const sendBinary = (data: ArrayBuffer) => ws.readyState === ws.OPEN && ws.send(data);
   const helloTimer = setTimeout(() => !player && ws.close(), HELLO_TIMEOUT);
 
   ws.on('pong', () => (alive = true));
@@ -40,7 +41,7 @@ wss.on('connection', (ws: WebSocket, req) => {
       if (bytes.byteLength !== STATE_BYTES) return;
       bytes[1] = player.id;
       const s = decodeState(bytes);
-      if (s) player.pos = s.pos;
+      if (s) player.state = s;
       for (const other of wss.clients) if (other !== ws && other.readyState === other.OPEN && (other as Tagged).playerId) other.send(bytes);
       return;
     }
@@ -55,7 +56,7 @@ wss.on('connection', (ws: WebSocket, req) => {
       if (config.password && msg.password !== config.password) return reject('wrong password');
       if (match.full) return reject('server full');
       clearTimeout(helloTimer);
-      player = match.join(msg.name, send);
+      player = match.join(msg.name, send, sendBinary);
       (ws as Tagged).playerId = player.id;
       console.log(`[join] #${player.id} ${player.name} from ${addr} (${match.players.size} playing)`);
     } else if (msg.t === 'ready' && player) {
@@ -87,6 +88,14 @@ wss.on('connection', (ws: WebSocket, req) => {
 });
 
 type Tagged = WebSocket & { playerId?: number };
+
+// The enemy thinks and moves at AI_HZ.
+let lastTick = performance.now();
+setInterval(() => {
+  const now = performance.now();
+  match.tick(Math.min(0.5, (now - lastTick) / 1000));
+  lastTick = now;
+}, 1000 / AI_HZ);
 
 http.listen(config.port, () => {
   console.log(`Spec Ops server on port ${config.port}, map seed ${config.mapSeed}, ${config.password ? 'password set' : 'NO password'}`);

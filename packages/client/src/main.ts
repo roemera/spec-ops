@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
-  BULLET_SPEED, BREATH_RECOVER, GRAVITY, HIP_SPREAD, HOLD_BREATH, PHYSICS_HZ, RECOIL_PITCH, RECOIL_SETTLE, RESPAWN_DELAY, SCOPE_FOV,
-  SCOPE_IN_TIME, SPAWN_PROTECTION, STATE_HZ, SWAY, ZONE_LABEL, generateMap,
+  BULLET_SPEED, BREATH_RECOVER, ENEMY_ID_BASE, GRAVITY, HIP_SPREAD, HOLD_BREATH, Health, PHYSICS_HZ, RECOIL_PITCH,
+  RECOIL_SETTLE, RESPAWN_DELAY, SCOPE_FOV, SCOPE_IN_TIME, SPAWN_PROTECTION, STATE_HZ, SWAY, ZONE_LABEL, generateMap,
   type Phase, type Score, type ServerMsg, type Stance,
 } from '@spec-ops/shared';
 import { Pipeline } from './render/pipeline';
@@ -16,13 +16,13 @@ import { Input } from './input';
 import { Hud, HUD_COLORS } from './ui/hud';
 import { Fx } from './fx';
 import { Audio } from './audio';
-import { Targets } from './targets';
+import { Enemies } from './enemies';
 import { Remotes } from './remotes';
 import { Net } from './net';
 import { Menu } from './ui/menu';
 
 const params = new URLSearchParams(location.search);
-// ?offline skips the menu (practice). ?join=host&name=X&password=Y joins a server directly.
+// ?join=host&name=X&password=Y joins a server directly.
 // ?test hides the click-to-play panel (headless browsers cannot lock the pointer).
 const TEST_MODE = params.has('test');
 const STEP = 1 / PHYSICS_HZ;
@@ -51,19 +51,12 @@ async function start() {
   const menu = new Menu();
   let error = '';
   for (;;) {
-    const choice = params.has('offline')
-      ? ({ mode: 'offline' } as const)
-      : params.has('join')
-        ? ({ mode: 'online', server: params.get('join')!, name: params.get('name') ?? 'TEST', password: params.get('password') ?? '' } as const)
-        : await menu.join(error);
-    if (choice.mode === 'offline') {
-      menu.hide();
-      // A new map every time, unless ?seed= asks for one.
-      return runGame(menu, Number(params.get('seed')) || 1 + Math.floor(Math.random() * 999999), null, null);
-    }
+    const choice = params.has('join')
+      ? { server: params.get('join')!, name: params.get('name') ?? 'TEST', password: params.get('password') ?? '' }
+      : await menu.join(error);
     try {
       const { net, welcome } = await Net.connect(choice.server, choice.name, choice.password);
-      return runGame(menu, welcome.seed, net, welcome);
+      return runGame(menu, net, welcome);
     } catch (e) {
       error = String(e).toUpperCase();
       if (params.has('join')) params.delete('join'); // fall back to the menu
@@ -77,7 +70,8 @@ function bearingName(x: number, z: number) {
   return ['NORTH', 'NORTHEAST', 'EAST', 'SOUTHEAST', 'SOUTH', 'SOUTHWEST', 'WEST', 'NORTHWEST'][Math.round(deg / 45) % 8];
 }
 
-function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | null) {
+function runGame(menu: Menu, net: Net, welcome: Welcome) {
+  const seed = welcome.seed;
   const viewCanvas = document.getElementById('view') as HTMLCanvasElement;
   const hudCanvas = document.getElementById('hud') as HTMLCanvasElement;
 
@@ -99,7 +93,7 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
   const map = generateMap(seed);
   const world = new World(map, physics);
 
-  const spawn = map.spawns[welcome?.spawn ?? 0];
+  const spawn = map.spawns[welcome.spawn];
   const player = new PlayerSim(physics, spawn, map.heightAt(spawn.x, spawn.z));
   const rifle = new Rifle();
 
@@ -118,24 +112,23 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
   const audio = new Audio();
   const wind = audio.loop('wind');
   wind.setVolume(0.25);
-  // Offline: practice targets. Online: other players.
-  const targets = net ? null : new Targets(world.scene, map);
-  const remotes = net ? new Remotes(world.scene, audio) : null;
-  let phase: Phase = welcome?.phase ?? 'live';
+  const remotes = new Remotes(world.scene, audio);
+  const enemies = new Enemies(world.scene, audio, fx);
+  let phase: Phase = welcome.phase;
   const playing = () => phase === 'live';
 
-  // Online combat state. The server owns health; we mirror ours and show what it tells us.
-  let health = 100;
+  // The server owns health; we mirror ours (healing at the same rate) and show what it tells us.
+  const health = new Health();
   let dead: { killer: string; zone: string; until: number } | null = null;
   let protectedUntil = 0, hurtAt = -10;
   let scores: Score[] = [];
   const names = new Map<number, string>();
-  const nameOf = (id: number) => names.get(id) ?? `PLAYER ${id}`;
+  const nameOf = (id: number) => (id >= ENEMY_ID_BASE ? 'THE ENEMY' : (names.get(id) ?? `PLAYER ${id}`));
   const zeroScores = (players: Array<{ id: number; name: string }>) =>
     players.map(({ id, name }) => ({ id, name, kills: 0, deaths: 0, shots: 0, hits: 0 }));
-  for (const p of welcome?.players ?? []) names.set(p.id, p.name);
-  scores = zeroScores(welcome?.players ?? []);
-  if (net && phase === 'live') protectedUntil = SPAWN_PROTECTION; // joined mid-match
+  for (const p of welcome.players) names.set(p.id, p.name);
+  scores = zeroScores(welcome.players);
+  if (phase === 'live') protectedUntil = SPAWN_PROTECTION; // joined mid-match
   /** You can move and shoot: match live and not dead. */
   const controlling = () => playing() && !dead;
   const arr = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
@@ -167,14 +160,13 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
 
   // --- Shooting ---
 
-  /** Remote ids are positive; offline targets are -1 - index. */
+  /** Targets are ids: players 1..8, enemies from ENEMY_ID_BASE. */
   const bullets = new Bullets(
     physics,
     (origin, dir, len): SoldierHit | null => {
-      const r = remotes?.hitTest(origin, dir, len);
-      if (r) return { t: r.t, target: r.remote.id, zone: r.zone };
-      const t = targets?.hitTest(origin, dir, len);
-      if (t) return { t: t.t, target: -1 - targets!.list.indexOf(t.target), zone: t.zone };
+      const r = remotes.hitTest(origin, dir, len), e = enemies.hitTest(origin, dir, len);
+      if (r && (!e || r.t < e.t)) return { t: r.t, target: r.remote.id, zone: r.zone };
+      if (e) return { t: e.t, target: e.enemy.id, zone: e.zone };
       return null;
     },
     (b, hit, point, dir) => onHitSoldier(b, hit, point, dir),
@@ -185,34 +177,16 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
     },
   );
 
-  let lastHit: { zone: string; range: number; killed: boolean } | null = null;
+  let lastHit: { target: number; zone: string; range: number } | null = null;
   function onHitSoldier(b: Bullet, hit: SoldierHit, point: THREE.Vector3, dir: THREE.Vector3) {
     fx.endTrail(b.id, point);
     audio.play('hit', { pos: point });
-    const range = Math.round(b.start.distanceTo(point));
-    if (hit.target > 0) {
-      // Another player: show a wound here; the shooter reports it and the server decides.
-      fx.wound(point, dir, PAL.friend);
-      if (!b.visual) {
-        net?.sendHit(b.id, hit.target, hit.zone, arr(point));
-        mark(false);
-      }
-      return;
-    }
-    const target = targets!.list[-1 - hit.target];
-    const res = target.health.applyHit(hit.zone);
-    lastHit = { zone: hit.zone, range, killed: res.killed };
-    if (res.killed) {
-      fx.shatter(target.model.parts, dir, PAL.enemy);
-      audio.play('shatter', { pos: point });
-      targets!.kill(target);
-      mark(true);
-      say(`${ZONE_LABEL[hit.zone]}  ·  ${range} M`, HUD_COLORS.red);
-    } else {
-      fx.wound(point, dir, PAL.enemy);
-      mark(false);
-      say(`${ZONE_LABEL[hit.zone]}  ·  ${range} M`);
-    }
+    // A wound here; the shooter reports it and the server decides what it did.
+    fx.wound(point, dir, hit.target >= ENEMY_ID_BASE ? PAL.enemy : PAL.friend);
+    if (b.visual) return;
+    net.sendHit(b.id, hit.target, hit.zone, arr(point), arr(dir));
+    lastHit = { target: hit.target, zone: hit.zone, range: Math.round(b.start.distanceTo(point)) };
+    mark(false);
   }
 
   // Scope, breath, sway, recoil.
@@ -259,7 +233,7 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
     // The trail starts at the muzzle you see (at the hip) or just under your eye (scoped).
     const start = scoped() ? origin.clone().addScaledVector(dir, 0.6).add(new THREE.Vector3(0, -0.06, 0)) : muzzleWorld();
     const b = bullets.spawn(start, origin, vel, player.body);
-    net?.sendFire(b.id, arr(origin), arr(vel));
+    net.sendFire(b.id, arr(origin), arr(vel));
     if (!scoped()) fx.muzzleFlash(vm.muzzle.getWorldPosition(new THREE.Vector3()), new THREE.Vector3(0, 0, -1), overlay);
     audio.play('shot');
     if (rifle.mag > 0) setTimeout(() => audio.play('bolt', { volume: 0.6 }), 180);
@@ -277,7 +251,7 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
 
   // --- Network ---
   let sendTimer = 0;
-  if (net && remotes) {
+  {
     const showLobby = (players: Parameters<Menu['lobby']>[0], countdown: number) =>
       menu.lobby(players, phase, countdown, net.id, (ready) => net.setReady(ready), () => net.startMatch());
     if (phase !== 'live') showLobby(welcome!.players, 0);
@@ -289,6 +263,7 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
           // New match: fresh scores, and everyone is back on their feet.
           scores = zeroScores(msg.players);
           for (const id of remotes.byId.keys()) remotes.respawn(id);
+          enemies.clear(); // the server stood them all up again
         }
         phase = msg.phase;
         if (phase === 'live') menu.hide();
@@ -299,7 +274,7 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
         }
       } else if (msg.t === 'spawn') {
         dead = null;
-        health = 100;
+        health.reset();
         protectedUntil = time + SPAWN_PROTECTION;
         const sp = map.spawns[msg.spawn];
         player.teleport(sp, map.heightAt(sp.x, sp.z));
@@ -308,24 +283,35 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
       } else if (msg.t === 'left') {
         remotes.remove(msg.id);
       } else if (msg.t === 'fire') {
-        // Someone else's shot: draw it and let it land here; they report its hits.
+        // Someone else's shot (a player's or the enemy's): draw it and let it land here.
+        // Players report their own hits; the server already decided the enemy's.
         const pos = new THREE.Vector3(...msg.pos), vel = new THREE.Vector3(...msg.vel);
         const dir = vel.clone().normalize();
         bullets.spawn(pos.clone().addScaledVector(dir, 0.9), pos, vel, undefined, true);
         fx.muzzleFlash(pos.clone().addScaledVector(dir, 0.9), dir);
-        audio.play('shot', { pos });
+        audio.play('shot', { pos, rate: msg.from >= ENEMY_ID_BASE ? 1.12 : 1 });
       } else if (msg.t === 'damage') {
         if (msg.target === net.id) {
-          health = msg.health;
+          health.health = msg.health;
+          health.sinceHit = 0;
           hurtAt = time;
+          audio.play('hit', { volume: 1.3 });
           if (msg.health > 0) say(`HIT BY ${nameOf(msg.attacker)}  ·  ${ZONE_LABEL[msg.zone]}`, HUD_COLORS.red);
+        } else if (msg.attacker === net.id && msg.target < ENEMY_ID_BASE) say(`HIT ${nameOf(msg.target)}  ·  ${ZONE_LABEL[msg.zone]}`);
+      } else if (msg.t === 'enemyDown') {
+        scores = msg.scores;
+        enemies.kill(msg.id, new THREE.Vector3(...msg.dir));
+        if (msg.killer === net.id) {
+          mark(true);
+          const range = lastHit?.target === msg.id ? `  ·  ${lastHit.range} M` : '';
+          say(`${ZONE_LABEL[msg.zone]}${range}`, HUD_COLORS.red);
         }
       } else if (msg.t === 'kill') {
         scores = msg.scores;
         const killer = nameOf(msg.killer), victim = nameOf(msg.victim);
         if (msg.victim === net.id) {
           dead = { killer, zone: ZONE_LABEL[msg.zone], until: time + RESPAWN_DELAY };
-          health = 0;
+          health.health = 0;
           scopeT = 0;
         } else {
           const r = remotes.byId.get(msg.victim);
@@ -348,16 +334,17 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
       }
     };
     net.onState = (st) => remotes.receive(st, time);
+    net.onEnemies = (list) => enemies.receive(list, time);
     net.onClose = (reason) => {
       input.unlock();
       menu.join(`DISCONNECTED: ${reason.toUpperCase()}`).then(() => location.reload());
     };
   }
 
-  if (!net) brief();
+  if (phase === 'live') brief();
 
   function sendState(dt: number) {
-    if (!net || !playing()) return;
+    if (!playing()) return;
     sendTimer += dt;
     if (sendTimer < 1 / STATE_HZ) return;
     sendTimer %= 1 / STATE_HZ;
@@ -508,8 +495,8 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
     time += dt;
 
     handleInput();
-    remotes?.update(time, dt);
-    targets?.update(dt);
+    remotes.update(time, dt);
+    enemies.update(time, dt);
     acc += dt;
     while (acc >= STEP) {
       player.step(STEP, move);
@@ -519,6 +506,7 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
       acc -= STEP;
     }
     if (rifle.update(dt) === 'reloaded') say('RELOADED');
+    if (!dead) health.regen(dt);
     updateAim(dt);
     footsteps();
     checkExtraction();
@@ -543,7 +531,7 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
       fovDeg: camera.fov,
       spreadRad: spreadNow(),
       viewHeading: ((Math.atan2(heading.x, -heading.z) * 180) / Math.PI + 360) % 360,
-      health,
+      health: health.health,
       stance: player.stance,
       mag: rifle.mag,
       spare: rifle.spare,
@@ -553,8 +541,8 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
       holding,
       hitMarker: hitMarker && { age: time - hitMarker.at, kill: hitMarker.kill },
       message,
-      scores: net && input.isHeld('Tab') ? scores : null,
-      myId: net?.id ?? 0,
+      scores: input.isHeld('Tab') ? scores : null,
+      myId: net.id,
       dead: dead && { killer: dead.killer, zone: dead.zone, respawnIn: dead.until - time },
       protectedFor: Math.max(0, protectedUntil - time),
       hurt: Math.max(0, 1 - (time - hurtAt) / 0.6),
@@ -565,7 +553,7 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
 
   // Handle for debugging and automated checks.
   (window as unknown as { __game: unknown }).__game = {
-    THREE, player, rifle, map, physics, world, targets, remotes, bullets, fire, net, camera, sway,
+    THREE, player, rifle, map, physics, world, enemies, remotes, bullets, fire, net, camera, sway, health,
     /** Hold the scope / hold breath in tests (headless has no right mouse). */
     setScoped(on: boolean | null) { scopeOverride = on; },
     setHoldBreath(on: boolean) { breathOverride = on; },

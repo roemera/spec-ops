@@ -5,7 +5,8 @@ from Call of Duty Spec Ops (snowy terrain, long sightlines, patrols to slip past
 
 The code started as a copy of Skeleton Crew (a multiplayer tank game). The soldier, rifle and look are
 new, and so is the procedural map (`mapgen.ts`: valley, forest, creek, route from start to extraction,
-outposts). The PvP match flow (lobby, kill limit) is inherited and still to be replaced.
+outposts) and the enemy AI, which only the server runs (`ai.ts`, with `obstacles.ts` for line of sight).
+There is no offline mode. The PvP match flow (lobby, kill limit) is inherited and still to be replaced.
 
 ## Direction
 
@@ -27,8 +28,10 @@ outposts). The PvP match flow (lobby, kill limit) is inherited and still to be r
   `npm run typecheck` enforces this.
 - Tuning numbers live in `packages/shared/src/constants.ts` and `hitzones.ts`.
 - Check: `npm run typecheck` and `npm run build`.
-- Run: `npm run dev` (game server + Vite together; default password `changeme`); `?test&offline` for headless single-player checks,
-  `?test&join=localhost:5173&name=A&password=pw` for multiplayer ones (hides the click-to-play
-  panel). `window.__game` exposes the player, rifle, targets, remotes, `fire()`, `aimAt(x, y, z)`
-  (allows for bullet drop), `setScoped()` and `setHoldBreath()` for scripted tests.
+- Run: `npm run dev` (game server + Vite together; default password `changeme`). Headless checks join
+  with `?test&join=localhost:5173&name=A&password=pw` (hides the click-to-play panel; `MAP_SEED=2`
+  on the server for a fixed map). `window.__game` exposes the player, rifle, enemies, remotes, net,
+  `fire()`, `aimAt(x, y, z)` (allows for bullet drop), `setScoped()` and `setHoldBreath()`.
+  Headless Chromium renders slowly and game time is capped per frame, so give waits generous margins.
+- AI tuning can be checked without a browser: run `EnemyAi.step()` in Node against a generated map.
 - Colours live in `packages/client/src/render/palette.ts`; every mesh uses `flat()` from there.

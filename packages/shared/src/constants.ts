@@ -52,6 +52,32 @@ export const PHYSICS_HZ = 60;
 
 // Damage
 export const PLAYER_HEALTH = 100;
+export const REGEN_DELAY = 5; // s after the last hit before health comes back
+export const REGEN_RATE = 25; // health per second
 export const RESPAWN_DELAY = 5; // s
 export const SPAWN_PROTECTION = 3; // s
 export const RESULTS_TIME = 15; // s the results screen shows before the lobby
+
+// Enemy AI. Detection is a meter per enemy per player: it fills while they can see you, and at 1
+// they are alert. Seeing is harder far away, low down, standing still, at the edge of their view,
+// and through pine branches.
+export const ENEMY_ID_BASE = 100; // enemy ids start here (players are 1..MAX_PLAYERS)
+export const AI_HZ = 10; // decisions and network updates per second
+export const ENEMY_HEALTH = 100;
+export const ENEMY_DAMAGE = 0.45; // fraction of the player rifle's zone damage an enemy hit does
+export const ENEMY_WALK = 1.4; // m/s patrolling
+export const ENEMY_RUN = 3.6; // m/s when alert
+export const VIEW_RANGE = 260; // m: beyond this they see nothing
+export const VIEW_HALF_ANGLE = (70 * Math.PI) / 180; // field of view either side of where they look
+export const DETECT_RATE = 2.4; // meter per second at close range, standing, moving, dead ahead
+export const DETECT_DECAY = 0.12; // per second when they can't see or hear you
+export const SUSPICIOUS_AT = 0.35; // meter level where they stop and look your way
+export const FOLIAGE_SEE = 0.45; // visibility left after looking through one pine's branches
+export const STANCE_SEEN = { stand: 1, crouch: 0.45, prone: 0.12 } as const;
+export const HEAR_STEPS = { stand: 14, crouch: 6, prone: 2 } as const; // m footsteps carry (doubled sprinting)
+export const HEAR_SHOT = 260; // m an unsuppressed rifle shot carries
+export const SHOUT_RANGE = 70; // m an alert enemy's shout reaches other enemies
+export const ENEMY_FIRE_RANGE = 280; // m
+export const ENEMY_FIRE_INTERVAL = [1.1, 2.2] as const; // s between shots
+export const ENEMY_ACCURACY = 0.45; // hit chance at close range once fully aimed at a still, standing target
+export const ENEMY_AIM_TIME = 3.5; // s of keeping you in sight to reach full accuracy
