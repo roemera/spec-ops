@@ -22,6 +22,7 @@ import { Fx } from './fx';
 import { Audio } from './audio';
 import { Enemies } from './enemies';
 import { Remotes } from './remotes';
+import { Decals } from './render/decals';
 import { Net } from './net';
 import { Menu, rejoin, type JoinChoice } from './ui/menu';
 
@@ -125,8 +126,9 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   const audio = new Audio();
   // The wind's sound comes from upwind, louder the harder it blows.
   const windSound = audio.loop('wind', new THREE.Vector3());
-  const remotes = new Remotes(world.scene, audio);
-  const enemies = new Enemies(world.scene, audio, fx);
+  const decals = new Decals(world.scene, map, weather.snow);
+  const remotes = new Remotes(world.scene, audio, decals);
+  const enemies = new Enemies(world.scene, audio, decals);
   const lasers = new Lasers(world.scene, physics);
   let phase: Phase = welcome.phase;
   const playing = () => phase === 'live';
@@ -275,7 +277,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       menu.lobby(players, phase, countdown, net.id, (ready) => net.setReady(ready), () => net.startMatch());
     if (phase !== 'live') showLobby(welcome.players, 0);
     else menu.hide();
-    for (const p of welcome.players) if (p.id !== net.id) remotes.setLife(p.id, p.life);
+    for (const p of welcome.players) if (p.id !== net.id) remotes.setLife(p.id, p.life, time);
     net.onMessage = (msg) => {
       if (msg.t === 'lobby') {
         // A new mission has a new map: rejoin from a fresh page to build it.
@@ -286,12 +288,13 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
         }
         for (const p of msg.players) {
           names.set(p.id, p.name);
-          if (p.id !== net.id) remotes.setLife(p.id, p.life);
+          if (p.id !== net.id) remotes.setLife(p.id, p.life, time);
         }
         if (msg.phase === 'live' && phase !== 'live') {
           // Mission start: fresh scores, everyone up.
           scores = zeroScores(msg.players);
           enemies.clear(); // the server stood them all up again
+          decals.clear();
         }
         phase = msg.phase;
         if (phase === 'live') menu.hide();
@@ -344,7 +347,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
           scopeT = 0;
           player.setStance('prone');
         } else {
-          remotes.setLife(msg.id, 'down');
+          remotes.setLife(msg.id, 'down', time);
           say(`${nameOf(msg.id)} IS DOWN  ·  HOLD E NEXT TO THEM`, HUD_COLORS.red, 4);
         }
       } else if (msg.t === 'revived') {
@@ -364,10 +367,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
         if (msg.id === net.id) life = 'dead';
         else {
           const r = remotes.byId.get(msg.id);
-          if (r && r.life !== 'dead') {
-            fx.shatter(r.model.parts, new THREE.Vector3(), PAL.friend);
-            audio.play('shatter', { pos: r.model.root.position.clone() });
-          }
+          if (r && r.life !== 'dead') audio.play('impact', { pos: r.model.root.position.clone(), volume: 0.6, rate: 0.6 });
           remotes.setLife(msg.id, 'dead');
           say(`${nameOf(msg.id)} BLED OUT`, HUD_COLORS.red);
         }
@@ -563,11 +563,13 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     vm.root.rotation.set(rx, 0, rz);
   }
 
+  let foot = 1;
   function footsteps() {
     const before = Math.floor(walkPhase / Math.PI);
     walkPhase += ((player.distance - walkedTo) / strideFor(player.speed)) * Math.PI;
     walkedTo = player.distance;
     if (Math.floor(walkPhase / Math.PI) === before) return;
+    if (player.stance !== 'prone') decals.print(player.pos.x, player.pos.z, player.yaw, (foot = -foot), time);
     const volume = player.stance === 'stand' ? (player.speed > 4 ? 0.7 : 0.45) : player.stance === 'crouch' ? 0.2 : 0.08;
     audio.play('step', { volume, rate: 0.9 + Math.random() * 0.2 });
   }
@@ -582,6 +584,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     updateRevive(dt);
     remotes.update(time, dt);
     enemies.update(time, dt);
+    decals.update(time);
     acc += dt;
     while (acc >= STEP) {
       player.step(STEP, move);
@@ -649,7 +652,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
 
   // Handle for debugging and automated checks.
   (window as unknown as { __game: unknown }).__game = {
-    THREE, RAPIER, player, rifle, map, physics, world, enemies, remotes, bullets, fire, net, camera, sway, health, weather, wind,
+    THREE, RAPIER, decals, player, rifle, map, physics, world, enemies, remotes, bullets, fire, net, camera, sway, health, weather, wind,
     /** Tests: no wind, so aimAt lands exactly. */
     setCalm(on: boolean) { calmOverride.on = on; },
     /** Hold the scope / hold breath in tests (headless has no right mouse). */

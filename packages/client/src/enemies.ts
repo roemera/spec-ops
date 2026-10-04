@@ -3,12 +3,13 @@ import { AI_HZ, STANCES, type AiState, type EnemyView, type HitZone, type Stance
 import { buildSoldier, type SoldierModel } from './models/soldier';
 import { ENEMY_COLOR } from './render/palette';
 import type { Audio } from './audio';
-import type { Fx } from './fx';
 import type { LaserSource } from './render/lasers';
+import type { Decals } from './render/decals';
 
 // The enemy, as the server reports it (AI_HZ): drawn a little in the past and smoothed between
 // updates. Their mood shows in their colour (yellow, orange, red: see ENEMY_COLOR) and you hear
-// it change: a "huh?" when one gets suspicious, a shout when one spots you.
+// it change: a "huh?" when one gets suspicious, a shout when one spots you. Killed, they fall the
+// way the bullet pushed them and stay where they dropped, in a spreading pool of blood.
 
 const DELAY = 1.5 / AI_HZ; // s behind the newest update, so there are always two to blend
 
@@ -29,12 +30,19 @@ export interface Enemy {
   dead: boolean;
   walked: number;
   speed: number;
+  /** Killed: the fall's progress (s), which way the body tips (local x/z), whether it has landed. */
+  fall: { t: number; tipX: number; tipZ: number; landed: boolean } | null;
+  foot: number; // which foot comes down next (-1 left, 1 right)
 }
+
+const FALL_TIME = 0.75; // s to hit the ground
+const UP = new THREE.Vector3(0, 1, 0);
+const DEAD_GREY = new THREE.Color(0x5d6164);
 
 export class Enemies {
   readonly byId = new Map<number, Enemy>();
 
-  constructor(private scene: THREE.Scene, private audio: Audio, private fx: Fx) {}
+  constructor(private scene: THREE.Scene, private audio: Audio, private decals: Decals) {}
 
   receive(list: EnemyView[], now: number) {
     for (const v of list) {
@@ -64,7 +72,7 @@ export class Enemies {
     model.root.position.set(v.pos.x, v.pos.y, v.pos.z);
     model.root.rotation.y = v.yaw;
     this.scene.add(model.root);
-    const e: Enemy = { id: v.id, model, snaps: [], stance: v.stance, state: v.state, locked: false, dead: false, walked: 0, speed: 0 };
+    const e: Enemy = { id: v.id, model, snaps: [], stance: v.stance, state: v.state, locked: false, dead: false, walked: 0, speed: 0, fall: null, foot: 1 };
     this.byId.set(v.id, e);
     return e;
   }
@@ -78,14 +86,41 @@ export class Enemies {
     (e.model.parts[0].material as THREE.MeshLambertMaterial).color.setHex(ENEMY_COLOR[state]);
   }
 
-  /** Killed: the body shatters along the bullet's direction. */
+  /** Killed: the body tips over the way the bullet pushed it (backwards if we can't tell). */
   kill(id: number, dir: THREE.Vector3) {
     const e = this.byId.get(id);
     if (!e || e.dead) return;
     e.dead = true;
-    e.model.root.visible = false;
-    this.fx.shatter(e.model.parts, dir, ENEMY_COLOR[e.state]);
-    this.audio.play('shatter', { pos: e.model.root.position.clone().setY(e.model.root.position.y + 1) });
+    // The push in the body's own frame (forward is -z).
+    const yaw = e.model.root.rotation.y, c = Math.cos(yaw), s = Math.sin(yaw);
+    let lx = dir.x * c - dir.z * s, lz = dir.x * s + dir.z * c;
+    const l = Math.hypot(lx, lz);
+    [lx, lz] = l < 1e-3 ? [0, 1] : [lx / l, lz / l];
+    e.fall = { t: 0, tipX: lx, tipZ: lz, landed: false };
+    // The uniform goes dull grey: the dead don't wear a mood.
+    (e.model.parts[0].material as THREE.MeshLambertMaterial).color.lerp(DEAD_GREY, 0.7);
+  }
+
+  /** A killed enemy tipping over, then lying still. */
+  private falling(e: Enemy, now: number, dt: number) {
+    const f = e.fall!, root = e.model.root;
+    if (f.landed) return;
+    f.t += dt;
+    const prone = e.stance === 'prone';
+    // Accelerating like a toppling post.
+    const k = Math.min(1, f.t / FALL_TIME), angle = prone ? 0 : (Math.PI / 2 - 0.12) * k * k;
+    root.rotation.order = 'YXZ';
+    root.rotation.x = angle * f.tipZ;
+    root.rotation.z = -angle * f.tipX;
+    // Limp: legs straight, the rifle sagging down along the body.
+    e.model.pose(prone ? 'prone' : 'stand', -1.3 * k, e.walked, 0, dt);
+    root.updateMatrixWorld(true);
+    if (k < 1) return;
+    f.landed = true;
+    const p = root.position;
+    const chest = prone ? p.clone() : p.clone().add(new THREE.Vector3(f.tipX, 0, f.tipZ).applyAxisAngle(UP, root.rotation.y).multiplyScalar(1.1));
+    this.decals.pool(chest.x, chest.z, 2.2, now);
+    this.audio.play('impact', { pos: chest.setY(p.y + 0.3), volume: 0.9, rate: 0.7 });
   }
 
   /** Every living enemy's laser: where its rifle is and which way it points. */
@@ -116,6 +151,10 @@ export class Enemies {
     const t = now - DELAY, pos = new THREE.Vector3();
     for (const e of this.byId.values()) {
       const s = e.snaps;
+      if (e.fall) {
+        this.falling(e, now, dt);
+        continue;
+      }
       if (e.dead || s.length === 0) continue;
       while (s.length > 2 && s[1].t <= t) s.shift();
       let yaw: number, pitch: number;
@@ -138,6 +177,7 @@ export class Enemies {
       root.rotation.y = yaw;
       // Footsteps when a foot comes down: their boots in the snow, so you can hear a patrol coming.
       if (e.model.pose(e.stance, pitch, e.walked, e.speed, dt)) {
+        if (e.stance !== 'prone') this.decals.print(pos.x, pos.z, yaw, (e.foot = -e.foot), now);
         const volume = e.speed > 2.5 ? 0.12 : 0.06; // faint: you hear a patrol only when it's close
         this.audio.play('step', { pos: pos.clone().setY(pos.y + STANCES[e.stance].height * 0.1), volume, rate: 0.85 + Math.random() * 0.2 });
       }

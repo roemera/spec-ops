@@ -157,3 +157,9 @@ with gloved hands in first person. Every texture is drawn in code into a small c
 `render/palette.ts` (and the enemies' mood colours) still decide the look. Detailed models are merged
 into one mesh per material (`render/merge.ts`) to keep draw calls down. Full resolution with
 antialiasing and soft sun shadows.
+
+The snow keeps a record: everyone standing or crouching leaves boot prints (yours, your squad's and
+the enemy's: you can read where a patrol went), which fill in with snow after a couple of minutes
+(sooner in heavy snow). The killed fall the way the shot pushed them and stay where they dropped, in
+a spreading pool of blood; a downed teammate lies curled on one side, bleeding, until someone gets
+them up. Hut windows glow: someone's home.

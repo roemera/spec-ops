@@ -38,15 +38,26 @@ export function buildRifle(): RifleModel {
     return mesh;
   };
 
-  // Stock: butt, wrist down to the grip, cheek rest, butt plate.
-  box(0.05, 0.12, 0.26, 0, -0.03, 0.36, m.wood);
-  box(0.048, 0.06, 0.16, 0, 0.0, 0.2, m.wood).rotation.x = 0.18;
-  box(0.05, 0.05, 0.12, 0, 0.045, 0.3, m.wood);
-  box(0.054, 0.13, 0.015, 0, -0.03, 0.495, m.dark);
-  box(0.04, 0.1, 0.05, 0, -0.07, 0.08, m.wood).rotation.x = -0.35; // grip
-  // Fore-end: wood under the barrel, tapering.
-  box(0.058, 0.06, 0.36, 0, -0.015, -0.2, m.wood);
-  box(0.05, 0.05, 0.12, 0, -0.01, -0.43, m.wood);
+  // Stock and fore-end: each one carved piece, a side profile (z, y) extruded across and bevelled.
+  const carve = (profile: Array<[number, number]>, width: number) => {
+    const shape = new THREE.Shape(profile.map(([z, y]) => new THREE.Vector2(z, y)));
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: width - 0.012, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.006, bevelSegments: 2, curveSegments: 4 });
+    geo.translate(0, 0, -(width - 0.012) / 2).rotateY(-Math.PI / 2); // profile x -> world z, extrusion -> world x
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(boxUV(geo, 0.18), m.wood);
+    root.add(mesh);
+  };
+  // Butt with a raised comb for the cheek, a slim wrist dropping into a pistol grip.
+  carve([
+    [0.05, 0.0], [0.1, 0.02], [0.22, 0.035], [0.27, 0.065], [0.4, 0.07], [0.485, 0.05],
+    [0.49, -0.09], [0.4, -0.095], [0.25, -0.05], [0.15, -0.032], [0.115, -0.05],
+    [0.1, -0.12], [0.06, -0.128], [0.055, -0.07], [0.04, -0.035], [0.035, 0.0],
+  ], 0.05);
+  box(0.054, 0.142, 0.012, 0, -0.02, 0.495, m.dark); // butt plate
+  // Fore-end under the barrel, tapering to a rounded tip.
+  carve([
+    [-0.02, 0.012], [-0.47, 0.012], [-0.492, 0.0], [-0.49, -0.025], [-0.44, -0.04], [-0.1, -0.05], [-0.02, -0.042],
+  ], 0.056);
   // Receiver, trigger guard, magazine.
   box(0.05, 0.05, 0.24, 0, 0.025, -0.02, m.metal);
   box(0.012, 0.012, 0.09, 0, -0.06, 0.02, m.dark);

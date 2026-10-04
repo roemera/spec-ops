@@ -3,9 +3,11 @@ import { INTERP_DELAY, STANCES, type Life, type SoldierState, type Stance } from
 import { buildSoldier, type SoldierModel } from './models/soldier';
 import { PAL } from './render/palette';
 import type { Audio } from './audio';
+import type { Decals } from './render/decals';
 
 // Other players (your squad): drawn INTERP_DELAY in the past, smoothed between the last two updates.
-// Bullets pass through them: there is no friendly fire.
+// Bullets pass through them: there is no friendly fire. Down, they lie curled on one side,
+// breathing, in a pool of blood; bled out, they lie still.
 
 interface Snap {
   t: number; // local receive time, s
@@ -25,12 +27,13 @@ export interface Remote {
   life: Life;
   stance: Stance;
   walked: number; // m, drives the walk cycle (and its footsteps)
+  foot: number; // which foot comes down next (-1 left, 1 right), for prints
 }
 
 export class Remotes {
   readonly byId = new Map<number, Remote>();
 
-  constructor(private scene: THREE.Scene, private audio: Audio) {}
+  constructor(private scene: THREE.Scene, private audio: Audio, private decals: Decals) {}
 
   receive(s: SoldierState, now: number) {
     let r = this.byId.get(s.id);
@@ -43,7 +46,7 @@ export class Remotes {
     const model = buildSoldier(PAL.friend);
     model.root.position.set(...s.pos);
     this.scene.add(model.root);
-    const r: Remote = { id: s.id, model, snaps: [], life: 'up', stance: s.stance, walked: 0 };
+    const r: Remote = { id: s.id, model, snaps: [], life: 'up', stance: s.stance, walked: 0, foot: 1 };
     this.byId.set(s.id, r);
     return r;
   }
@@ -55,12 +58,19 @@ export class Remotes {
     this.byId.delete(id);
   }
 
-  /** Up, down (lying in the snow, rolled on one side) or out (the body is gone; the caller shatters it). */
-  setLife(id: number, life: Life) {
+  /** Up, down (curled on one side in the snow, bleeding) or out (lying still, the uniform dulled). */
+  setLife(id: number, life: Life, now = 0) {
     const r = this.byId.get(id);
-    if (!r) return;
+    if (!r || r.life === life) return;
+    if (life === 'down' && r.life === 'up') {
+      // Under the torso: rolled onto the left side, that's 0.8 m to their left.
+      const p = r.model.root.position, yaw = r.model.root.rotation.y;
+      this.decals.pool(p.x - Math.cos(yaw) * 0.8, p.z + Math.sin(yaw) * 0.8, 1.4, now);
+    }
+    const mat = r.model.parts[0].material as THREE.MeshLambertMaterial;
+    mat.color.setHex(PAL.friend);
+    if (life === 'dead') mat.color.multiplyScalar(0.7);
     r.life = life;
-    r.model.root.visible = life !== 'dead';
   }
 
   /** Pose every remote for render time `now - INTERP_DELAY`. */
@@ -69,7 +79,11 @@ export class Remotes {
     const pos = new THREE.Vector3();
     for (const r of this.byId.values()) {
       const s = r.snaps;
-      if (s.length === 0 || r.life === 'dead') continue;
+      if (s.length === 0) continue;
+      if (r.life === 'dead') {
+        r.model.root.rotation.z = 1.45; // still now
+        continue;
+      }
       while (s.length > 2 && s[1].t <= t) s.shift(); // keep the pair around t
       let yaw: number, pitch: number;
       if (s.length >= 2 && t >= s[0].t && t <= s[1].t) {
@@ -91,10 +105,13 @@ export class Remotes {
       if (moved < 3) r.walked += moved; // not a respawn jump
       r.model.root.position.copy(pos);
       r.model.root.rotation.y = yaw;
-      r.model.root.rotation.z = r.life === 'down' ? 0.9 : 0; // down: rolled onto one side
-      const speed = Math.hypot(newest.vel.x, newest.vel.z);
+      const down = r.life === 'down';
+      // Down: rolled onto one side, curled up, breathing hard.
+      r.model.root.rotation.z = down ? 1.45 + 0.025 * Math.sin(now * 3.5) : 0;
+      const speed = down ? 0 : Math.hypot(newest.vel.x, newest.vel.z);
       // Footsteps when a foot comes down: quieter crouched, almost silent prone.
-      if (r.model.pose(r.stance, pitch, r.walked, speed, dt)) {
+      if (r.model.pose(down ? 'crouch' : r.stance, down ? -0.6 : pitch, r.walked, speed, dt)) {
+        if (r.stance !== 'prone') this.decals.print(pos.x, pos.z, yaw, (r.foot = -r.foot), now);
         const volume = r.stance === 'stand' ? (speed > 4 ? 1.2 : 0.8) : r.stance === 'crouch' ? 0.35 : 0.12;
         this.audio.play('step', { pos: pos.clone().setY(pos.y + STANCES[r.stance].height * 0.1), volume, rate: 0.9 + Math.random() * 0.2 });
       }
