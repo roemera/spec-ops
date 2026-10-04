@@ -100,6 +100,7 @@ far away, at the edge of their view or behind pine branches. They hear footsteps
 and every rifle shot within 260 m. Kill one and anyone within 45 m who sees it (or is standing
 right beside the body) goes on alert at once, though they need a moment to work out where the shot
 came from. Their aim gets better the longer they keep you in sight, and two body hits put you down.
+No single enemy hit takes more than half your health, not even one to the head.
 
 Enemies wear their mood: **yellow** on patrol, **orange** when suspicious or searching, **red** once
 they have spotted you. Every enemy rifle has a **laser sight** in the same colour, so you can see

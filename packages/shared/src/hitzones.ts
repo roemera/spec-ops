@@ -36,9 +36,9 @@ export class Health {
     return this.health <= 0;
   }
 
-  /** `scale` < 1 for weaker guns (enemy rifles). */
-  applyHit(zone: HitZone, scale = 1): HitResult {
-    const damage = Math.round(ZONE_DAMAGE[zone] * scale);
+  /** `scale` < 1 for weaker guns (enemy rifles); `cap` the most one hit can take. */
+  applyHit(zone: HitZone, scale = 1, cap = Infinity): HitResult {
+    const damage = Math.min(cap, Math.round(ZONE_DAMAGE[zone] * scale));
     this.health = Math.max(0, this.health - damage);
     return { zone, damage, health: this.health, killed: this.dead };
   }

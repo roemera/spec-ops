@@ -91,6 +91,7 @@ export const ENEMY_ID_BASE = 100; // enemy ids start here (players are 1..MAX_PL
 export const AI_HZ = 10; // decisions and network updates per second
 export const ENEMY_HEALTH = 100;
 export const ENEMY_DAMAGE = 0.55; // fraction of the player rifle's zone damage an enemy hit does
+export const ENEMY_MAX_HIT = PLAYER_HEALTH * 0.5; // the most one enemy hit can take, even a headshot
 export const ENEMY_WALK = 1.4; // m/s patrolling
 export const ENEMY_RUN = 4; // m/s when alert
 export const VIEW_RANGE = 260; // m: beyond this they see nothing

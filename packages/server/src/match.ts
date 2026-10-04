@@ -1,5 +1,5 @@
 import {
-  BLEED_OUT, BULLET_SPEED, COUNTDOWN_SECONDS, WIND_DRIFT, weatherFor, windAt, ENEMY_DAMAGE, ENEMY_ID_BASE, EXTRACT_RADIUS, EnemyAi, FOLIAGE_SEE, GRAVITY,
+  BLEED_OUT, BULLET_SPEED, COUNTDOWN_SECONDS, WIND_DRIFT, weatherFor, windAt, ENEMY_DAMAGE, ENEMY_ID_BASE, ENEMY_MAX_HIT, EXTRACT_RADIUS, EnemyAi, FOLIAGE_SEE, GRAVITY,
   AMMO_DROP, Health, MAX_PLAYERS, MEDKIT_DROP_CHANCE, MEDKIT_HEAL, Obstacles, PICKUP_RANGE, baseSupplies, type Pickup, RESULTS_TIME, REVIVE_HEALTH, REVIVE_RANGE, SPAWN_PROTECTION, encodeEnemies, generateMap,
   type ClientMsg, type EnemyShot, type GameMap, type HitZone, type Life, type Phase, type PlayerInfo, type PlayerView,
   type Score, type ServerMsg, type SoldierState,
@@ -280,7 +280,7 @@ export class Match {
     const target = shot.hit && this.players.get(shot.hit.player);
     if (!shot.hit || !target || target.life !== 'up' || Date.now() < target.protectedUntil) return;
     const zone = shot.hit.zone;
-    const res = target.health.applyHit(zone, ENEMY_DAMAGE);
+    const res = target.health.applyHit(zone, ENEMY_DAMAGE, ENEMY_MAX_HIT);
     this.broadcast({ t: 'damage', target: target.id, attacker: shot.enemy, zone, damage: res.damage, health: res.health, point: [shot.to.x, shot.to.y, shot.to.z] });
     if (res.killed) this.goDown(target, shot.enemy, zone);
   }
