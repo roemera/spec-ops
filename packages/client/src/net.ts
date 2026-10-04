@@ -1,6 +1,6 @@
 import {
   PROTOCOL_VERSION, decodeState, encodeState,
-  type ClientMsg, type HitZone, type ServerMsg, type TankState,
+  type ClientMsg, type HitZone, type ServerMsg, type SoldierState,
 } from '@spec-ops/shared';
 
 type Vec3 = [number, number, number];
@@ -10,7 +10,7 @@ type Welcome = Extract<ServerMsg, { t: 'welcome' }>;
 /** WebSocket connection to the game server. */
 export class Net {
   onMessage: (msg: ServerMsg) => void = () => {};
-  onState: (s: TankState) => void = () => {};
+  onState: (s: SoldierState) => void = () => {};
   onClose: (reason: string) => void = () => {};
   private closedReason = 'connection lost';
 
@@ -67,19 +67,15 @@ export class Net {
     this.send({ t: 'start' });
   }
 
-  sendFire(shell: number, pos: Vec3, vel: Vec3, mg = false) {
-    this.send(mg ? { t: 'fire', shell, pos, vel, mg } : { t: 'fire', shell, pos, vel });
+  sendFire(shot: number, pos: Vec3, vel: Vec3) {
+    this.send({ t: 'fire', shot, pos, vel });
   }
 
-  sendHit(shell: number, target: number, zone: HitZone, point: Vec3) {
-    this.send({ t: 'hit', shell, target, zone, point });
+  sendHit(shot: number, target: number, zone: HitZone, point: Vec3) {
+    this.send({ t: 'hit', shot, target, zone, point });
   }
 
-  sendBreak(id: number) {
-    this.send({ t: 'break', id });
-  }
-
-  sendState(s: TankState) {
+  sendState(s: SoldierState) {
     if (this.ws.readyState === WebSocket.OPEN) this.ws.send(encodeState(s));
   }
 }

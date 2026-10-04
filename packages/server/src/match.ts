@@ -1,5 +1,5 @@
 import {
-  COUNTDOWN_SECONDS, MAX_PLAYERS, RESPAWN_DELAY, RESULTS_TIME, SPAWN_PROTECTION, TankDamage, generateMap,
+  COUNTDOWN_SECONDS, Health, MAX_PLAYERS, RESPAWN_DELAY, RESULTS_TIME, SPAWN_PROTECTION, generateMap,
   type ClientMsg, type Phase, type PlayerInfo, type Score, type ServerMsg, type Spawn,
 } from '@spec-ops/shared';
 
@@ -9,15 +9,15 @@ export interface Player {
   ready: boolean;
   pos: [number, number, number] | null; // last reported position, for picking spawns
   send(msg: ServerMsg): void;
-  // Combat (the server owns health; clients report their own shells' hits)
-  damage: TankDamage;
+  // Combat (the server owns health; clients report their own bullets' hits)
+  health: Health;
   alive: boolean;
   protectedUntil: number; // ms timestamp: hits before this are ignored (spawn protection)
   kills: number;
   deaths: number;
   shots: number;
   hits: number;
-  hitShells: Set<number>; // shells already counted as hits (accuracy counts each shell once)
+  hitShots: Set<number>; // shots already counted as hits (accuracy counts each shot once)
   respawnTimer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -30,8 +30,6 @@ export class Match {
   phase: Phase = 'lobby';
   countdown = 0;
   private spawns: Spawn[];
-  private destructible: Set<number>; // ids of map objects that can break
-  readonly broken = new Set<number>(); // broken this match; everything stands again at the next
   private countdownTimer: ReturnType<typeof setInterval> | null = null;
 
   readonly seed: number;
@@ -43,7 +41,6 @@ export class Match {
     this.killLimit = killLimit;
     const map = generateMap(seed);
     this.spawns = map.spawns;
-    this.destructible = new Set(map.objects.filter((o) => o.destructible).map((o) => o.id));
   }
 
   get full() {
@@ -57,12 +54,12 @@ export class Match {
 
   join(name: string, send: Player['send']): Player {
     const p: Player = {
-      id: this.freeId(), name: name.slice(0, 16) || 'TANK', ready: false, pos: null, send,
-      damage: new TankDamage(), alive: true, protectedUntil: Date.now() + SPAWN_PROTECTION * 1000,
-      kills: 0, deaths: 0, shots: 0, hits: 0, hitShells: new Set(), respawnTimer: null,
+      id: this.freeId(), name: name.slice(0, 16) || 'SOLDIER', ready: false, pos: null, send,
+      health: new Health(), alive: true, protectedUntil: Date.now() + SPAWN_PROTECTION * 1000,
+      kills: 0, deaths: 0, shots: 0, hits: 0, hitShots: new Set(), respawnTimer: null,
     };
     this.players.set(p.id, p);
-    p.send({ t: 'welcome', id: p.id, seed: this.seed, players: this.list(), phase: this.phase, spawn: this.pickSpawn(p.id), broken: [...this.broken] });
+    p.send({ t: 'welcome', id: p.id, seed: this.seed, players: this.list(), phase: this.phase, spawn: this.pickSpawn(p.id) });
     this.broadcastLobby();
     return p;
   }
@@ -113,7 +110,6 @@ export class Match {
     if (this.countdownTimer) clearInterval(this.countdownTimer);
     this.countdownTimer = null;
     this.phase = 'live';
-    this.broken.clear();
     for (const p of this.players.values()) this.resetCombat(p);
     // Everyone to a different spawn, in random order.
     const order = this.spawns.map((_, i) => i).sort(() => Math.random() - 0.5);
@@ -136,8 +132,8 @@ export class Match {
   private resetCombat(p: Player) {
     if (p.respawnTimer) clearTimeout(p.respawnTimer);
     Object.assign(p, { alive: true, protectedUntil: Date.now() + SPAWN_PROTECTION * 1000, kills: 0, deaths: 0, shots: 0, hits: 0, respawnTimer: null });
-    p.damage.reset();
-    p.hitShells.clear();
+    p.health.reset();
+    p.hitShots.clear();
   }
 
   // --- Combat ---
@@ -145,24 +141,24 @@ export class Match {
   /** A player fired: count it and show the shot to everyone else. */
   fire(from: Player, msg: Fire) {
     if (this.phase !== 'live' || !from.alive) return;
-    if (!msg.mg) from.shots++; // accuracy counts cannon shots only
+    from.shots++;
     for (const p of this.players.values()) {
-      if (p !== from) p.send({ t: 'fire', from: from.id, shell: msg.shell, pos: msg.pos, vel: msg.vel, mg: msg.mg });
+      if (p !== from) p.send({ t: 'fire', from: from.id, shot: msg.shot, pos: msg.pos, vel: msg.vel });
     }
   }
 
-  /** The shooter's client says its shell hit someone. Trusted, but the target must be alive and unprotected. */
+  /** The shooter's client says its bullet hit someone. Trusted, but the target must be alive and unprotected. */
   hit(from: Player, msg: Hit) {
     const target = this.players.get(msg.target);
     if (this.phase !== 'live' || !target || target === from || !target.alive || Date.now() < target.protectedUntil) return;
     const zone = msg.zone;
-    const res = target.damage.applyHit(zone, Math.random());
-    if (zone !== 'man' && !from.hitShells.has(msg.shell)) {
-      from.hitShells.add(msg.shell);
+    const res = target.health.applyHit(zone);
+    if (!from.hitShots.has(msg.shot)) {
+      from.hitShots.add(msg.shot);
       from.hits++;
     }
-    this.broadcast({ t: 'damage', target: target.id, attacker: from.id, zone, damage: res.damage, health: res.health, broke: res.broke, point: msg.point });
-    if (!res.destroyed) return;
+    this.broadcast({ t: 'damage', target: target.id, attacker: from.id, zone, damage: res.damage, health: res.health, point: msg.point });
+    if (!res.killed) return;
     target.alive = false;
     target.deaths++;
     from.kills++;
@@ -172,17 +168,10 @@ export class Match {
     target.respawnTimer = setTimeout(() => this.respawn(target), RESPAWN_DELAY * 1000);
   }
 
-  /** A player broke a map object. Record it once and tell everyone else. */
-  breakObject(from: Player, id: number) {
-    if (this.phase !== 'live' || !this.destructible.has(id) || this.broken.has(id)) return;
-    this.broken.add(id);
-    for (const p of this.players.values()) if (p !== from) p.send({ t: 'break', id });
-  }
-
   private respawn(p: Player) {
     p.respawnTimer = null;
     if (this.phase !== 'live' || !this.players.has(p.id)) return;
-    p.damage.reset();
+    p.health.reset();
     p.alive = true;
     p.protectedUntil = Date.now() + SPAWN_PROTECTION * 1000;
     p.send({ t: 'spawn', spawn: this.pickSpawn(p.id) });

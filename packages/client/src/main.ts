@@ -1,22 +1,21 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
-  GUN_MAX_ELEVATION, GUN_MIN_ELEVATION, MG_RATE, MG_SPEED, MG_SPREAD, PART_LABEL, PHYSICS_HZ, RENDER_HEIGHT,
-  RENDER_WIDTH, RESPAWN_DELAY, SHELL_SPEED, SPAWN_PROTECTION, STATE_HZ, ZONE_LABEL, generateMap, hullZone,
-  type HitZone, type Part, type Phase, type Score, type ServerMsg,
+  BULLET_SPEED, BREATH_RECOVER, GRAVITY, HIP_SPREAD, HOLD_BREATH, PHYSICS_HZ, RECOIL_PITCH, RECOIL_SETTLE, RESPAWN_DELAY, SCOPE_FOV,
+  SCOPE_IN_TIME, SPAWN_PROTECTION, STATE_HZ, SWAY, ZONE_LABEL, generateMap,
+  type Phase, type Score, type ServerMsg, type Stance,
 } from '@spec-ops/shared';
 import { Pipeline } from './render/pipeline';
+import { PAL } from './render/palette';
 import { World } from './world';
-import { buildTankModel, TRACK_TEXTURE_LENGTH } from './models/tank';
-import { TankSim } from './sim/tank';
+import { PlayerSim, type MoveInput } from './sim/player';
+import { Rifle } from './sim/rifle';
+import { Bullets, type Bullet, type SoldierHit } from './sim/bullets';
+import { buildRifle } from './models/rifle';
 import { Input } from './input';
 import { Hud, HUD_COLORS } from './ui/hud';
-import { Gun } from './sim/gun';
-import { Shells, type HitOutcome, type Shell, type ShellHit } from './sim/shells';
-import { Bullets } from './sim/bullets';
-import type { ColliderRole } from './sim/tank';
 import { Fx } from './fx';
-import { Audio, type Voice } from './audio';
+import { Audio } from './audio';
 import { Targets } from './targets';
 import { Remotes } from './remotes';
 import { Net } from './net';
@@ -28,13 +27,20 @@ const params = new URLSearchParams(location.search);
 const TEST_MODE = params.has('test');
 const STEP = 1 / PHYSICS_HZ;
 
-// Views (vertical fov in degrees): head out of the hatch, and down the gun sight (right mouse).
-const LOOKOUT_FOV = 60;
-const SIGHT_FOV = 15;
-const AIM_RANGE = 500; // m: how far the gaze ray looks for something to aim the gun at
-const MOUSE_SENS = 0.0025; // rad per pixel at 60 deg fov
-const RECOIL_IMPULSE = 9000; // N*s
+const BASE_FOV = 70; // deg vertical
+const ADS_FOV = 55; // deg while raising the scope, before it snaps to the scope view
+const MOUSE_SENS = 0.0022; // rad per pixel at BASE_FOV; scales with fov so the scope isn't twitchy
 const MESSAGE_TIME = 2.5; // s
+const STRIDE = 0.75; // m per footstep
+const STANCE_STEADY: Record<Stance, number> = { stand: 1, crouch: 0.6, prone: 0.25 }; // sway and spread
+const ZERO_RANGE = 100; // m: the scope is zeroed here (bullets cross the crosshair at this range)
+const drop = (m: number) => (GRAVITY * m) / (2 * BULLET_SPEED * BULLET_SPEED); // rad, small angle
+
+// First-person rifle, drawn with its own camera at a fixed fov: where it sits at the hip and
+// when raised to the eye (view space).
+const VM_FOV = 58;
+const HIP = new THREE.Vector3(0.15, -0.15, -0.58);
+const ADS = new THREE.Vector3(0, -0.085, -0.36);
 
 type Welcome = Extract<ServerMsg, { t: 'welcome' }>;
 
@@ -66,188 +72,176 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
   const viewCanvas = document.getElementById('view') as HTMLCanvasElement;
   const hudCanvas = document.getElementById('hud') as HTMLCanvasElement;
 
-  // Letterbox both canvases to 16:9; the browser scales them up with nearest-neighbour.
-  let box = { left: 0, top: 0, width: 1, height: 1 };
+  const pipeline = new Pipeline(viewCanvas);
+  const hud = new Hud(hudCanvas);
+  const camera = new THREE.PerspectiveCamera(BASE_FOV, 16 / 9, 0.05, 1500);
+  const vmCamera = new THREE.PerspectiveCamera(VM_FOV, 16 / 9, 0.02, 10); // the rifle's camera; stays at the origin
   const layout = () => {
-    const scale = Math.min(innerWidth / RENDER_WIDTH, innerHeight / RENDER_HEIGHT);
-    const width = Math.floor(RENDER_WIDTH * scale), height = Math.floor(RENDER_HEIGHT * scale);
-    box = { left: Math.floor((innerWidth - width) / 2), top: Math.floor((innerHeight - height) / 2), width, height };
-    for (const c of [viewCanvas, hudCanvas]) {
-      Object.assign(c.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${width}px`, height: `${height}px` });
-    }
+    camera.aspect = vmCamera.aspect = pipeline.resize(innerWidth, innerHeight);
+    camera.updateProjectionMatrix();
+    vmCamera.updateProjectionMatrix();
+    hud.resize(innerWidth, innerHeight);
   };
   layout();
   addEventListener('resize', layout);
 
-  const pipeline = new Pipeline(viewCanvas);
-  const physics = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  const physics = new RAPIER.World({ x: 0, y: -GRAVITY, z: 0 });
   physics.timestep = STEP;
   const map = generateMap(seed);
   const world = new World(map, physics);
 
   const spawn = map.spawns[welcome?.spawn ?? 0];
-  const tank = new TankSim(physics, spawn, map.heightAt(spawn.x, spawn.z));
-  const model = buildTankModel();
-  world.scene.add(model.root);
+  const player = new PlayerSim(physics, spawn, map.heightAt(spawn.x, spawn.z));
+  const rifle = new Rifle();
 
-  const hud = new Hud(hudCanvas);
-  const gun = new Gun();
-  const fx = new Fx(world.scene);
+  // The first-person rifle lives in its own scene, drawn over the world.
+  const overlay = new THREE.Scene();
+  overlay.add(new THREE.HemisphereLight(0xffffff, PAL.snowShade, 1.6));
+  const vmSun = new THREE.DirectionalLight(0xffffff, 1.6);
+  vmSun.position.set(0.45, 0.8, 0.3);
+  overlay.add(vmSun);
+  const vm = buildRifle();
+  overlay.add(vm.root);
+  /** The viewmodel muzzle, in world space (for trails): its view-space position, carried by the real camera. */
+  const muzzleWorld = () => camera.localToWorld(vm.muzzle.getWorldPosition(new THREE.Vector3()));
+
+  const fx = new Fx(world.scene, map.heightAt);
   const audio = new Audio();
-  const engine = audio.loop('engine');
+  const wind = audio.loop('wind');
+  wind.setVolume(0.25);
   // Offline: practice targets. Online: other players.
-  const targets = net ? null : new Targets(physics, world.scene, map, spawn, audio, fx);
-  const remotes = net ? new Remotes(physics, world.scene, audio) : null;
+  const targets = net ? null : new Targets(world.scene, map, physics, spawn);
+  const remotes = net ? new Remotes(world.scene, audio) : null;
   let phase: Phase = welcome?.phase ?? 'live';
   const playing = () => phase === 'live';
 
   // Online combat state. The server owns health; we mirror ours and show what it tells us.
+  let health = 100;
   let dead: { killer: string; zone: string; until: number } | null = null;
   let protectedUntil = 0, hurtAt = -10;
   let scores: Score[] = [];
   const names = new Map<number, string>();
-  const nameOf = (id: number) => names.get(id) ?? `TANK ${id}`;
+  const nameOf = (id: number) => names.get(id) ?? `PLAYER ${id}`;
   const zeroScores = (players: Array<{ id: number; name: string }>) =>
     players.map(({ id, name }) => ({ id, name, kills: 0, deaths: 0, shots: 0, hits: 0 }));
   for (const p of welcome?.players ?? []) names.set(p.id, p.name);
   scores = zeroScores(welcome?.players ?? []);
   if (net && phase === 'live') protectedUntil = SPAWN_PROTECTION; // joined mid-match
-  /** You can drive and shoot: match live and not dead. */
+  /** You can move and shoot: match live and not dead. */
   const controlling = () => playing() && !dead;
   const arr = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
 
+  let time = 0;
   let message: { text: string; color: string; until: number } | null = null;
-  const say = (text: string, color: string) => (message = { text, color, until: time + MESSAGE_TIME });
+  const say = (text: string, color: string = HUD_COLORS.ink) => (message = { text, color, until: time + MESSAGE_TIME });
+  let hitMarker: { at: number; kill: boolean } | null = null;
+  const mark = (kill: boolean) => (hitMarker = { at: time, kill });
 
-  // The crew (you) mumbles gibberish when things happen. Each game gets its own voice pitch.
-  const crewPitch = 110 + Math.random() * 90;
-  let lastVoice = -10;
-  let subtitle: { text: string; until: number } | null = null;
-  function crew(mood: Voice, urgent = false) {
-    if (!urgent && time - lastVoice < 0.6) return;
-    lastVoice = time;
-    audio.voice(mood, crewPitch);
-    const words = { grunt: 1, yep: 1, shout: 2, scream: 3, panic: 5, cheer: 3, wail: 2 }[mood];
-    const end = mood === 'scream' || mood === 'panic' || mood === 'cheer' || mood === 'shout' ? '!' : '...';
-    subtitle = { text: `CREW: ${gibberish(words)}${end}`, until: time + 1.8 };
-  }
+  // --- Shooting ---
 
-  const shells = new Shells(physics, (shell, hit) => onShellHit(shell, hit));
-
-  // Machine-gun bullets only hurt a lookout sticking out of a hatch.
+  /** Remote ids are positive; offline targets are -1 - index. */
   const bullets = new Bullets(
     physics,
-    (origin, dir, len) => {
-      const h = remotes?.hitMan(origin, dir, len);
-      return h ? { t: h.t, target: h.remote.id } : null;
+    (origin, dir, len): SoldierHit | null => {
+      const r = remotes?.hitTest(origin, dir, len);
+      if (r) return { t: r.t, target: r.remote.id, zone: r.zone };
+      const t = targets?.hitTest(origin, dir, len);
+      if (t) return { t: t.t, target: -1 - targets!.list.indexOf(t.target), zone: t.zone };
+      return null;
     },
-    (b, target, point) => {
-      fx.puff(point, true);
-      if (!b.visual) net?.sendHit(b.id, target, 'man', arr(point));
+    (b, hit, point, dir) => onHitSoldier(b, hit, point, dir),
+    (b, point, normal) => {
+      fx.endTrail(b.id, point);
+      fx.impact(point, normal, point.y > map.heightAt(point.x, point.z) + 0.3 ? PAL.rock : PAL.snow);
+      audio.play('impact', { pos: point, volume: 0.6 });
     },
-    (_b, point) => fx.puff(point),
   );
-  let mgCooldown = 0;
-  function fireMg() {
-    const pos = new THREE.Vector3(), dir = new THREE.Vector3();
-    tank.coax(pos, dir, aimPoint);
-    // a little spread: a cone around the barrel
-    dir.x += (Math.random() - 0.5) * 2 * MG_SPREAD;
-    dir.y += (Math.random() - 0.5) * 2 * MG_SPREAD;
-    dir.z += (Math.random() - 0.5) * 2 * MG_SPREAD;
-    dir.normalize();
-    const v = tank.body.linvel();
-    const vel = dir.multiplyScalar(MG_SPEED).add(new THREE.Vector3(v.x, v.y, v.z));
-    const b = bullets.spawn(pos, vel, tank.body);
-    net?.sendFire(b.id, arr(pos), arr(vel), true);
-    audio.play('mg', { volume: 0.5 });
-  }
 
-  /** Which zone a hit on a tank is, from the collider it hit and the surface normal. */
-  function classifyZone(role: ColliderRole, body: { rotation(): { x: number; y: number; z: number; w: number } }, normal: THREE.Vector3): HitZone {
-    if (role === 'barrel') return 'barrel';
-    if (role === 'turret') return normal.y > 0.7 ? 'top' : 'turret';
-    // Surface normal in the hull's own frame.
-    const r = body.rotation();
-    const local = normal.clone().applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w).invert());
-    return hullZone(local.x, local.y, local.z);
-  }
-
-  /** Our shell hit another tank: report it; the server owns the damage. */
-  function reportHits(shell: Shell, point: THREE.Vector3, direct: { id: number; zone: HitZone } | null) {
-    if (net && direct && !shell.visual) net.sendHit(shell.id, direct.id, direct.zone, arr(point));
-  }
-
-  /** Decide what a shell hit does. Fences and trees break and let it through; everything else stops it. */
-  function onShellHit(shell: Shell, hit: ShellHit): HitOutcome {
-    const broken = world.shellHit(hit.collider.handle, hit.dir);
-    if (broken && broken.kind !== 'wall') return 'pass';
-    const remote = remotes?.find(hit.collider) ?? null;
-    const found = targets?.find(hit.collider) ?? null;
-    if (!broken && hit.collider.isSensor() && !found && !remote) return 'pass'; // some other sensor
-    fx.explosion(hit.point, found || remote ? 1.2 : 1);
-    audio.play('explosion', { pos: hit.point });
-    if (remote) audio.play('impact', { pos: hit.point });
-    const direct = remote && !remote.remote.dead ? { id: remote.remote.id, zone: classifyZone(remote.role, remote.remote.sim.body, hit.normal) } : null;
-    reportHits(shell, hit.point, direct);
-    if (found && targets) {
-      audio.play('impact', { pos: hit.point });
-      const { target, role } = found;
-      if (target.deadFor > 0) return 'stop';
-      const zone = classifyZone(role, target.sim.body, hit.normal);
-      const res = target.sim.damage.applyHit(zone, Math.random());
-      if (res.broke) target.sim.onPartBroken(res.broke);
-      let text = `HIT ${ZONE_LABEL[res.zone]} -${res.damage}`;
-      if (res.broke) text += ` ${PART_LABEL[res.broke]} BROKEN`;
-      if (res.destroyed) {
-        text = `TARGET DESTROYED (${ZONE_LABEL[res.zone]})`;
-        targets.destroy(target);
-        crew('cheer', true);
+  let lastHit: { zone: string; range: number; killed: boolean } | null = null;
+  function onHitSoldier(b: Bullet, hit: SoldierHit, point: THREE.Vector3, dir: THREE.Vector3) {
+    fx.endTrail(b.id, point);
+    audio.play('hit', { pos: point });
+    const range = Math.round(b.start.distanceTo(point));
+    if (hit.target > 0) {
+      // Another player: show a wound here; the shooter reports it and the server decides.
+      fx.wound(point, dir, PAL.friend);
+      if (!b.visual) {
+        net?.sendHit(b.id, hit.target, hit.zone, arr(point));
+        mark(false);
       }
-      say(text, res.destroyed ? HUD_COLORS.lime : HUD_COLORS.yellow);
-      lastHit = { zone: res.zone, damage: res.damage, broke: res.broke, destroyed: res.destroyed };
+      return;
     }
-    return 'stop';
+    const target = targets!.list[-1 - hit.target];
+    const res = target.health.applyHit(hit.zone);
+    lastHit = { zone: hit.zone, range, killed: res.killed };
+    if (res.killed) {
+      fx.shatter(target.model.parts, dir, PAL.enemy);
+      audio.play('shatter', { pos: point });
+      targets!.kill(target);
+      mark(true);
+      say(`${ZONE_LABEL[hit.zone]}  ·  ${range} M`, HUD_COLORS.red);
+    } else {
+      fx.wound(point, dir, PAL.enemy);
+      mark(false);
+      say(`${ZONE_LABEL[hit.zone]}  ·  ${range} M`);
+    }
   }
-  let lastHit: { zone: HitZone; damage: number; broke: Part | null; destroyed: boolean } | null = null;
+
+  // Scope, breath, sway, recoil.
+  let scopeT = 0; // 0 at the hip .. 1 through the scope
+  let scopeOverride: boolean | null = null; // tests: headless browsers can't hold the right button
+  let breath = 1, winded = false, holding = false;
+  let swayAmp = 0;
+  const sway = { yaw: 0, pitch: 0 };
+  let kick = 0; // first-person rifle kick, decays
+  let recoil = 0; // rad the view is kicked up, settles back to 0
+  let shotsFired = 0;
+  const scoped = () => scopeT >= 1;
+
+  function spreadNow() {
+    const moving = player.speed > 0.5 ? 1.6 : 1;
+    return HIP_SPREAD * STANCE_STEADY[player.stance] * moving * (1 - scopeT);
+  }
 
   function fire() {
     if (!controlling()) return;
-    if (tank.isBroken('gun')) {
-      audio.play('dry');
-      say('GUN BROKEN', HUD_COLORS.red);
+    if (rifle.mag === 0) {
+      if (rifle.reload()) audio.play('reload');
+      else if (!rifle.reloading) {
+        audio.play('dry');
+        say('NO AMMO', HUD_COLORS.red);
+      }
       return;
     }
-    if (!gun.fire()) {
-      audio.play('dry');
-      say('RELOADING', HUD_COLORS.yellow);
-      return;
+    if (!rifle.fire()) return; // working the bolt or reloading
+    const origin = camera.getWorldPosition(new THREE.Vector3());
+    const dir = camera.getWorldDirection(new THREE.Vector3());
+    // Hip fire: somewhere in a cone. Scoped: dead on (the sway is already in the camera).
+    const spread = spreadNow();
+    if (spread > 0) {
+      const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * spread;
+      const right = new THREE.Vector3().crossVectors(dir, camera.up).normalize();
+      const up = new THREE.Vector3().crossVectors(right, dir);
+      dir.addScaledVector(right, Math.cos(a) * r).addScaledVector(up, Math.sin(a) * r).normalize();
     }
-    const pos = new THREE.Vector3(), dir = new THREE.Vector3();
-    tank.muzzle(pos, dir);
-    const v = tank.body.linvel();
-    const vel = dir.clone().multiplyScalar(SHELL_SPEED).add(new THREE.Vector3(v.x, v.y, v.z));
-    const shell = shells.spawn(pos, vel, tank.body);
-    net?.sendFire(shell.id, arr(pos), arr(vel));
-    tank.recoil(dir, RECOIL_IMPULSE);
-    crew('shout');
-    fx.muzzleFlash(pos, dir);
-    audio.play('cannon');
-    setTimeout(() => audio.play('clank', { rate: 0.8 }), 350); // casing hits the floor
+    dir.y += drop(ZERO_RANGE); // zeroed: aim a hair high so the bullet crosses the crosshair at 100 m
+    dir.normalize();
+    // Inherit your horizontal movement (vertical speed on the ground is just the controller pressing down).
+    const vel = dir.clone().multiplyScalar(BULLET_SPEED).add(new THREE.Vector3(player.vel.x, 0, player.vel.z));
+    // The trail starts at the muzzle you see (at the hip) or just under your eye (scoped).
+    const start = scoped() ? origin.clone().addScaledVector(dir, 0.6).add(new THREE.Vector3(0, -0.06, 0)) : muzzleWorld();
+    const b = bullets.spawn(start, origin, vel, player.body);
+    net?.sendFire(b.id, arr(origin), arr(vel));
+    if (!scoped()) fx.muzzleFlash(vm.muzzle.getWorldPosition(new THREE.Vector3()), new THREE.Vector3(0, 0, -1), overlay);
+    audio.play('shot');
+    if (rifle.mag > 0) setTimeout(() => audio.play('bolt', { volume: 0.6 }), 180);
+    else if (rifle.reload()) setTimeout(() => audio.play('reload'), 300);
+    recoil += RECOIL_PITCH * (player.stance === 'prone' ? 0.5 : 1);
+    kick = 1;
     shotsFired++;
   }
-  let shotsFired = 0;
-  const input = new Input(viewCanvas, (cx, cy) => [
-    Math.floor(((cx - box.left) / box.width) * RENDER_WIDTH),
-    Math.floor(((cy - box.top) / box.height) * RENDER_HEIGHT),
-  ]);
-  const camera = new THREE.PerspectiveCamera(LOOKOUT_FOV, RENDER_WIDTH / RENDER_HEIGHT, 0.1, 1200);
 
-  // Where you look, relative to the hull (yaw: + is left). The turret follows it.
-  const look = { yaw: 0, pitch: -0.05 };
-  let sighting = false; // right mouse held: down the gun sight
-  let sightOverride: boolean | null = null; // tests: headless browsers can't hold the right button
-
+  const input = new Input(viewCanvas);
   addEventListener('mousedown', () => {
     audio.unlock();
     if (controlling()) input.lock();
@@ -256,9 +250,6 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
   // --- Network ---
   let sendTimer = 0;
   if (net && remotes) {
-    // Map objects: what was broken before we joined, and what we break, goes through the server.
-    for (const id of welcome!.broken) world.breakById(id, false);
-    world.onBreak = (id) => net.sendBreak(id);
     const showLobby = (players: Parameters<Menu['lobby']>[0], countdown: number) =>
       menu.lobby(players, phase, countdown, net.id, (ready) => net.setReady(ready), () => net.startMatch());
     if (phase !== 'live') showLobby(welcome!.players, 0);
@@ -267,10 +258,9 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
       if (msg.t === 'lobby') {
         for (const p of msg.players) names.set(p.id, p.name);
         if (msg.phase === 'live' && phase !== 'live') {
-          // New match: fresh scores, and every wreck from the last one is back in action.
+          // New match: fresh scores, and everyone is back on their feet.
           scores = zeroScores(msg.players);
           for (const id of remotes.byId.keys()) remotes.respawn(id);
-          world.resetBreakables();
         }
         phase = msg.phase;
         if (phase === 'live') menu.hide();
@@ -281,64 +271,44 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
         }
       } else if (msg.t === 'spawn') {
         dead = null;
-        wreck(model, false);
+        health = 100;
         protectedUntil = time + SPAWN_PROTECTION;
         const sp = map.spawns[msg.spawn];
-        tank.teleport(sp, map.heightAt(sp.x, sp.z));
-        tank.damage.reset();
-        gun.reset();
-        look.yaw = 0;
-        look.pitch = -0.05;
-        say('GO GO GO', HUD_COLORS.lime);
+        player.teleport(sp, map.heightAt(sp.x, sp.z));
+        rifle.reset();
+        say('GO', HUD_COLORS.red);
       } else if (msg.t === 'left') {
         remotes.remove(msg.id);
-      } else if (msg.t === 'fire' && msg.mg) {
-        const pos = new THREE.Vector3(...msg.pos), vel = new THREE.Vector3(...msg.vel);
-        bullets.spawn(pos, vel, remotes.byId.get(msg.from)?.sim.body, true);
-        audio.play('mg', { pos, volume: 0.7 });
       } else if (msg.t === 'fire') {
-        // Someone else's shot: draw it and let it explode here; they report its hits.
+        // Someone else's shot: draw it and let it land here; they report its hits.
         const pos = new THREE.Vector3(...msg.pos), vel = new THREE.Vector3(...msg.vel);
-        shells.spawn(pos, vel, remotes.byId.get(msg.from)?.sim.body, true);
-        fx.muzzleFlash(pos, vel.clone().normalize());
-        audio.play('cannon', { pos });
+        const dir = vel.clone().normalize();
+        bullets.spawn(pos.clone().addScaledVector(dir, 0.9), pos, vel, undefined, true);
+        fx.muzzleFlash(pos.clone().addScaledVector(dir, 0.9), dir);
+        audio.play('shot', { pos });
       } else if (msg.t === 'damage') {
-        const what = `${ZONE_LABEL[msg.zone]} -${msg.damage}${msg.broke ? ` ${PART_LABEL[msg.broke]} BROKEN` : ''}`;
         if (msg.target === net.id) {
-          tank.damage.health = msg.health;
-          if (msg.broke) {
-            tank.damage.breakPart(msg.broke);
-            tank.onPartBroken(msg.broke);
-          }
+          health = msg.health;
           hurtAt = time;
-          audio.play('impact', { volume: 1.5, rate: 0.7 });
-          if (msg.health > 0) crew(msg.broke ? 'panic' : 'scream', true);
-          say(`HIT BY ${nameOf(msg.attacker)}: ${what}`, HUD_COLORS.red);
-        } else if (msg.attacker === net.id) {
-          say(`HIT ${nameOf(msg.target)}: ${what}`, HUD_COLORS.yellow);
-          lastHit = { zone: msg.zone, damage: msg.damage, broke: msg.broke, destroyed: msg.health <= 0 };
+          if (msg.health > 0) say(`HIT BY ${nameOf(msg.attacker)}  ·  ${ZONE_LABEL[msg.zone]}`, HUD_COLORS.red);
         }
       } else if (msg.t === 'kill') {
         scores = msg.scores;
         const killer = nameOf(msg.killer), victim = nameOf(msg.victim);
         if (msg.victim === net.id) {
           dead = { killer, zone: ZONE_LABEL[msg.zone], until: time + RESPAWN_DELAY };
-          tank.centreSteer();
-          tank.throttleIdx = 2; // stop
-          const p = tank.body.translation();
-          fx.fire(new THREE.Vector3(p.x, p.y + 1.2, p.z), RESPAWN_DELAY);
-          audio.play('explosion', { volume: 1.5 });
-          wreck(model, true);
-          crew('wail', true);
+          health = 0;
+          scopeT = 0;
         } else {
-          remotes.kill(msg.victim);
-          if (msg.killer === net.id) crew('cheer', true);
           const r = remotes.byId.get(msg.victim);
-          if (r) fx.fire(r.model.root.position.clone().add(new THREE.Vector3(0, 1.2, 0)), RESPAWN_DELAY);
-          say(msg.killer === net.id ? `YOU KILLED ${victim}` : `${killer} KILLED ${victim}`, msg.killer === net.id ? HUD_COLORS.lime : HUD_COLORS.white);
+          if (r && !r.dead) {
+            fx.shatter(r.model.parts, new THREE.Vector3(), PAL.friend);
+            audio.play('shatter', { pos: r.model.root.position.clone() });
+          }
+          remotes.kill(msg.victim);
+          if (msg.killer === net.id) mark(true);
+          say(msg.killer === net.id ? `YOU KILLED ${victim}  ·  ${ZONE_LABEL[msg.zone]}` : `${killer} KILLED ${victim}`, msg.killer === net.id ? HUD_COLORS.red : HUD_COLORS.ink);
         }
-      } else if (msg.t === 'break') {
-        world.breakById(msg.id);
       } else if (msg.t === 'respawn') {
         if (msg.id !== net.id) remotes.respawn(msg.id);
       } else if (msg.t === 'results') {
@@ -346,9 +316,7 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
         dead = null;
         input.unlock();
         menu.results(msg.scores, msg.winner, msg.seconds, net.id);
-        wreck(model, false);
         audio.jingle(msg.winner === net.id);
-        crew(msg.winner === net.id ? 'cheer' : 'wail', true);
       }
     };
     net.onState = (st) => remotes.receive(st, time);
@@ -363,155 +331,144 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
     sendTimer += dt;
     if (sendTimer < 1 / STATE_HZ) return;
     sendTimer %= 1 / STATE_HZ;
-    const p = tank.body.translation(), q = tank.body.rotation(), v = tank.body.linvel();
     net.sendState({
       id: 0,
-      flags: 0,
-      pos: [p.x, p.y, p.z],
-      quat: [q.x, q.y, q.z, q.w],
-      vel: [v.x, v.y, v.z],
-      turretYaw: tank.turretYaw,
-      gunPitch: tank.gunPitch,
+      stance: player.stance,
+      scoped: scoped(),
+      pos: arr(player.pos),
+      vel: arr(player.vel),
+      yaw: player.yaw,
+      pitch: player.pitch,
     });
   }
 
-  const hullPos = new THREE.Vector3(), hullQuat = new THREE.Quaternion();
-  const tmpV = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler(0, 0, 0, 'YXZ');
-  let acc = 0, last = performance.now() / 1000, time = 0;
+  // --- Input ---
+  const move: MoveInput = { forward: 0, right: 0, sprint: false, jump: false, scoped: false };
+  let wantScope = false;
 
-  function handleInput(dt: number) {
+  function handleInput() {
+    move.forward = move.right = 0;
+    move.jump = move.sprint = false;
+    wantScope = false;
     if (!controlling()) {
-      // Lobby/countdown/dead: tank parked, input ignored.
+      // Lobby/countdown/dead: input ignored.
       input.takePresses();
       input.takeClicks();
       input.takeMouse();
-      tank.brake = true;
-      sighting = false;
       return;
     }
     for (const code of input.takePresses()) {
       audio.unlock();
-      // Dev key: break a random part on your own tank to see its effect.
-      if (code === 'F8') {
-        const parts: Part[] = ['tracks', 'engine', 'turretRing', 'gun', 'optics'];
-        const part = parts[Math.floor(Math.random() * parts.length)];
-        tank.damage.breakPart(part);
-        tank.onPartBroken(part);
-        say(`DEV: ${PART_LABEL[part]} BROKEN`, HUD_COLORS.red);
-        crew('panic', true);
+      // C: crouch (or up from prone to a crouch). Z: prone, or back up. Space: jump, or stand up.
+      if (code === 'KeyC') player.setStance(player.stance === 'crouch' ? 'stand' : 'crouch');
+      if (code === 'KeyZ') player.setStance(player.stance === 'prone' ? 'stand' : 'prone') || player.setStance('crouch');
+      if (code === 'Space') {
+        if (player.stance === 'stand') move.jump = true;
+        else player.setStance('stand');
       }
-      // Driving levers: they stay where you leave them.
-      if (code === 'KeyW') tank.throttleUp();
-      if (code === 'KeyS') tank.throttleDown();
-      if (code === 'KeyA') tank.steerBy(-1);
-      if (code === 'KeyD') tank.steerBy(1);
-      if (code === 'KeyX') tank.centreSteer();
+      if (code === 'KeyR' && rifle.reload()) audio.play('reload');
     }
-    tank.brake = input.isHeld('Space');
+    const shift = input.isHeld('ShiftLeft') || input.isHeld('ShiftRight');
+    move.forward = (input.isHeld('KeyW') ? 1 : 0) - (input.isHeld('KeyS') ? 1 : 0);
+    move.right = (input.isHeld('KeyD') ? 1 : 0) - (input.isHeld('KeyA') ? 1 : 0);
+    wantScope = scopeOverride ?? (input.locked && input.mouseButtons.has(2));
+    move.sprint = shift && !wantScope;
+    move.scoped = wantScope;
 
     const clicks = input.takeClicks();
     if (clicks.length) audio.unlock();
     const [dx, dy] = input.takeMouse();
-    // A click that captures the mouse is not also a game action (no firing on the grab click).
-    const lmb = clicks.some((c) => c.button === 0 && c.locked);
-    sighting = sightOverride ?? (input.locked && input.mouseButtons.has(2));
-    if (sighting) {
-      // Down the sight the mouse moves the gun directly; keep the gaze in step so letting go doesn't jump.
-      const sens = MOUSE_SENS * (SIGHT_FOV / 60) * (input.isHeld('ShiftLeft') ? 0.3 : 1);
-      // Only when the mouse moves: a swing already under way (from the gaze) carries on.
-      if (dx || dy) tank.aimBy(-dx * sens, -dy * sens);
-      look.yaw = tank.turretYawCmd;
-      look.pitch = clamp(tank.gunPitchCmd, 1.2);
+    const sens = MOUSE_SENS * (camera.fov / BASE_FOV);
+    player.yaw -= dx * sens;
+    player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - dy * sens));
+    // A click that captures the mouse is not also a shot.
+    if (clicks.some((c) => c.button === 0 && c.locked)) fire();
+  }
+
+  /** Scope in/out, held breath, and the drift it steadies. */
+  function updateAim(dt: number) {
+    const sprinting = move.sprint && player.speed > 4;
+    const canScope = wantScope && !rifle.reloading && !sprinting && controlling();
+    scopeT = Math.max(0, Math.min(1, scopeT + (canScope ? dt : -dt * 1.5) / SCOPE_IN_TIME));
+
+    const shift = input.isHeld('ShiftLeft') || input.isHeld('ShiftRight') || breathOverride;
+    holding = scoped() && shift && !winded && breath > 0;
+    if (holding) {
+      breath = Math.max(0, breath - dt / HOLD_BREATH);
+      if (breath === 0) winded = true;
     } else {
-      look.yaw -= dx * MOUSE_SENS;
-      look.pitch = clamp(look.pitch - dy * MOUSE_SENS, 1.2);
+      breath = Math.min(1, breath + dt / BREATH_RECOVER);
+      if (winded && breath > 0.6) winded = false;
     }
-    if (lmb) fire();
-    // Hold the middle button for the machine gun. Unlimited ammo, no recoil.
-    if (input.mouseButtons.has(1) && input.locked) {
-      mgCooldown -= dt;
-      while (mgCooldown <= 0) {
-        fireMg();
-        mgCooldown += 1 / MG_RATE;
-      }
-    } else mgCooldown = 0;
+    // Sway amplitude eases between states so it never jumps.
+    const moving = player.speed > 0.3 ? 2 : 1;
+    const target = SWAY * STANCE_STEADY[player.stance] * moving * (holding ? 0.06 : winded ? 2.2 : 1);
+    swayAmp += (target - swayAmp) * (1 - Math.exp(-dt * 4));
+    const t = time;
+    sway.yaw = scopeT * swayAmp * (Math.sin(t * 0.63) * 0.65 + Math.sin(t * 1.71 + 1) * 0.35);
+    sway.pitch = scopeT * swayAmp * (Math.sin(t * 1.07 + 2) * 0.6 + Math.sin(t * 2.29) * 0.25);
+    recoil *= Math.exp((-dt * 3) / RECOIL_SETTLE);
   }
+  let breathOverride = false;
 
-  /** Point the gun at a world position, compensating for hull tilt and shell drop. */
-  function aimAtPoint(x: number, y: number, z: number) {
-    tank.pose(hullPos, hullQuat);
-    const local = new THREE.Vector3(x, y, z).sub(hullPos).applyQuaternion(hullQuat.clone().invert());
-    const { yaw, pitch, range } = tank.aimAnglesTo(local);
-    tank.turretYawCmd = yaw;
-    const drop = (9.81 * range) / (2 * SHELL_SPEED * SHELL_SPEED);
-    tank.gunPitchCmd = Math.max(GUN_MIN_ELEVATION, Math.min(GUN_MAX_ELEVATION, pitch + drop));
-    return range;
-  }
+  // --- Frame ---
+  const feet = new THREE.Vector3(), euler = new THREE.Euler(0, 0, 0, 'YXZ');
+  let acc = 0, last = performance.now() / 1000, nextStep = STRIDE;
 
-  /** Head-out view: the turret swings toward whatever you are looking at. */
-  const gazeTarget = new THREE.Vector3();
-  let aimRange = 75; // m to what you're aiming at
-  const aimPoint = new THREE.Vector3(); // what the crosshair (sight) or your gaze (head out) is on
-
-  /** Down the sight: how far away is whatever the crosshair is on? */
-  function sightRange() {
-    const origin = camera.getWorldPosition(new THREE.Vector3());
-    const dir = camera.getWorldDirection(new THREE.Vector3());
-    const r = rangeAlong(origin, dir);
-    aimPoint.copy(origin).addScaledVector(dir, r);
-    return r;
-  }
-
-  /** Distance along a ray to the first solid thing, or another tank's commander (he has no collider). */
-  function rangeAlong(origin: THREE.Vector3, dir: THREE.Vector3) {
-    const hit = physics.castRay(new RAPIER.Ray(origin, dir), AIM_RANGE, true, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, undefined, undefined, tank.body);
-    const man = remotes?.hitMan(origin, dir, AIM_RANGE);
-    return Math.min(hit ? hit.timeOfImpact : AIM_RANGE, man ? man.t : AIM_RANGE);
-  }
-  function followGaze() {
-    const origin = camera.getWorldPosition(new THREE.Vector3());
-    const dir = camera.getWorldDirection(new THREE.Vector3());
-    gazeTarget.copy(origin).addScaledVector(dir, Math.max(rangeAlong(origin, dir), 15));
-    aimRange = aimAtPoint(gazeTarget.x, gazeTarget.y, gazeTarget.z);
-    aimPoint.copy(gazeTarget);
-  }
-
-  /** Where the gun actually points, on screen (HUD pixels), at the distance you're looking. */
-  function gunMark(): [number, number] | null {
-    const pos = new THREE.Vector3(), dir = new THREE.Vector3();
-    tank.muzzle(pos, dir);
-    const p = pos.addScaledVector(dir, Math.max(15, gazeTarget.distanceTo(pos))).project(camera);
-    if (p.z > 1) return null;
-    return [((p.x + 1) / 2) * RENDER_WIDTH, ((1 - p.y) / 2) * RENDER_HEIGHT];
-  }
-
-  function placeCamera(): { fov: number; viewHeading: number } {
-    let fov = LOOKOUT_FOV;
+  function placeCamera(alpha: number) {
+    player.feet(alpha, feet);
     if (dead) {
-      // Death camera: circle the burning wreck in jerky 12 fps steps.
-      model.root.visible = true;
-      const a = (Math.floor(time * 12) / 12) * 0.5;
-      camera.position.set(hullPos.x + Math.sin(a) * 14, hullPos.y + 6, hullPos.z + Math.cos(a) * 14);
-      camera.lookAt(hullPos);
-    } else if (sighting) {
-      // Down the gun sight, right above the cannon.
-      model.root.visible = false;
-      camera.position.copy(model.gun.localToWorld(tmpV.set(0, 0.3, -0.4)));
-      model.gun.getWorldQuaternion(camera.quaternion);
-      fov = SIGHT_FOV;
+      // Down in the snow, looking along the ground.
+      camera.position.set(feet.x, feet.y + 0.25, feet.z);
+      euler.set(-0.1, player.yaw, 0.5);
     } else {
-      // Head out of the hatch.
-      model.root.visible = true;
-      camera.position.copy(model.turret.localToWorld(tmpV.set(0.5, 1.35, 0.4)));
-      camera.quaternion.copy(hullQuat).multiply(tmpQ.setFromEuler(tmpE.set(look.pitch, look.yaw, 0)));
+      camera.position.set(feet.x, feet.y + player.eye, feet.z);
+      euler.set(player.pitch + sway.pitch + recoil, player.yaw + sway.yaw, 0);
     }
+    camera.quaternion.setFromEuler(euler);
+    const fov = scoped() ? SCOPE_FOV : BASE_FOV + (ADS_FOV - BASE_FOV) * scopeT;
     if (camera.fov !== fov) {
       camera.fov = fov;
       camera.updateProjectionMatrix();
     }
     camera.updateMatrixWorld();
-    const dir = camera.getWorldDirection(tmpV);
-    return { fov, viewHeading: compass(dir.x, dir.z) };
+  }
+
+  /** The rifle in your hands: hip to eye with the scope, bob while walking, kick, bolt and reload moves. */
+  function placeViewmodel(dt: number) {
+    vm.root.visible = !scoped() && !dead;
+    const bob = player.grounded ? Math.min(1, player.speed / 3) : 0;
+    const phase = (player.distance / STRIDE) * Math.PI;
+    vm.root.position.lerpVectors(HIP, ADS, scopeT);
+    vm.root.position.x += Math.sin(phase) * 0.012 * bob * (1 - scopeT);
+    vm.root.position.y += Math.abs(Math.cos(phase)) * 0.01 * bob * (1 - scopeT);
+    kick = Math.max(0, kick - dt * 6);
+    vm.root.position.z += kick * 0.06;
+    let rx = kick * 0.12, rz = 0;
+    // Working the bolt: the handle comes up and back; reloading: the rifle rolls to show the magazine.
+    if (rifle.boltLeft > 0) {
+      const k = Math.sin(rifle.busyProgress * Math.PI);
+      vm.bolt.rotation.z = k * 1.2;
+      vm.bolt.position.z = 0.08 + k * 0.08;
+      rz = k * 0.15;
+    } else {
+      vm.bolt.rotation.z = 0;
+      vm.bolt.position.z = 0.08;
+    }
+    if (rifle.reloading) {
+      const k = Math.sin(rifle.busyProgress * Math.PI);
+      rz = k * 0.6;
+      rx -= k * 0.25;
+      vm.root.position.y -= k * 0.06;
+    }
+    vm.root.rotation.set(rx, 0, rz);
+  }
+
+  function footsteps() {
+    if (player.distance < nextStep) return;
+    nextStep = player.distance + STRIDE;
+    const volume = player.stance === 'stand' ? (player.speed > 4 ? 0.7 : 0.45) : player.stance === 'crouch' ? 0.2 : 0.08;
+    audio.play('step', { volume, rate: 0.9 + Math.random() * 0.2 });
   }
 
   function frame() {
@@ -520,62 +477,55 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
     last = now;
     time += dt;
 
-    handleInput(dt);
+    handleInput();
     remotes?.update(time, dt);
+    targets?.update(dt);
     acc += dt;
     while (acc >= STEP) {
-      tank.step(STEP);
-      targets?.step(STEP);
+      player.step(STEP, move);
+      move.jump = false;
       physics.step();
-      world.checkBreaks(tank.hullCollider, Math.abs(tank.speed));
-      shells.step(STEP);
       bullets.step(STEP);
       acc -= STEP;
     }
-    if (gun.update(dt)) audio.play('breech', { volume: 0.5 }); // reloaded
-    world.update(dt);
-    targets?.update(dt);
+    if (rifle.update(dt) === 'reloaded') say('RELOADED');
+    updateAim(dt);
+    footsteps();
     sendState(dt);
-    fx.syncTracers(shells.live);
-    fx.syncBulletTracers(bullets.live);
-    fx.update(dt);
     if (message && time > message.until) message = null;
 
-    // Sync the tank model.
-    tank.pose(hullPos, hullQuat);
-    model.root.position.copy(hullPos);
-    model.root.quaternion.copy(hullQuat);
-    model.turret.rotation.y = tank.turretYaw;
-    model.gun.rotation.x = tank.gunPitch;
-    model.trackMaps[0].offset.y += (tank.trackSpeed[0] * dt) / TRACK_TEXTURE_LENGTH;
-    model.trackMaps[1].offset.y += (tank.trackSpeed[1] * dt) / TRACK_TEXTURE_LENGTH;
-    model.root.updateMatrixWorld(true);
-
-    const view = placeCamera();
-    if (controlling() && !sighting) followGaze();
-    else if (sighting) aimRange = sightRange();
-    audio.setInside(sighting);
+    placeCamera(acc / STEP);
+    placeViewmodel(dt);
+    world.followShadow(feet);
+    fx.syncTrails(bullets.live);
+    fx.update(dt);
     audio.setListener(camera);
-    engine.setRate(0.6 + Math.abs(tank.speed) / 12);
-    engine.setVolume(0.35);
-    pipeline.render(world.scene, camera);
+    pipeline.render(world.scene, camera, { scene: overlay, camera: vmCamera });
 
+    const heading = camera.getWorldDirection(new THREE.Vector3());
     hud.draw({
-      tank, time,
+      time,
       locked: input.locked || TEST_MODE || !playing(),
       everLocked: input.everLocked,
-      sighting,
-      fovDeg: view.fov,
-      viewHeading: view.viewHeading,
-      gunMark: !dead && !sighting ? gunMark() : null,
-      gun,
+      scoped: scoped() && !dead,
+      fovDeg: camera.fov,
+      spreadRad: spreadNow(),
+      viewHeading: ((Math.atan2(heading.x, -heading.z) * 180) / Math.PI + 360) % 360,
+      health,
+      stance: player.stance,
+      mag: rifle.mag,
+      spare: rifle.spare,
+      busy: rifle.reloading ? 'reload' : rifle.boltLeft > 0 ? 'bolt' : null,
+      busyProgress: rifle.busyProgress,
+      breath,
+      holding,
+      hitMarker: hitMarker && { age: time - hitMarker.at, kill: hitMarker.kill },
       message,
       scores: net && input.isHeld('Tab') ? scores : null,
       myId: net?.id ?? 0,
       dead: dead && { killer: dead.killer, zone: dead.zone, respawnIn: dead.until - time },
       protectedFor: Math.max(0, protectedUntil - time),
       hurt: Math.max(0, 1 - (time - hurtAt) / 0.6),
-      subtitle: subtitle && time < subtitle.until ? subtitle.text : null,
     });
     requestAnimationFrame(frame);
   }
@@ -583,51 +533,27 @@ function runGame(menu: Menu, seed: number, net: Net | null, welcome: Welcome | n
 
   // Handle for debugging and automated checks.
   (window as unknown as { __game: unknown }).__game = {
-    THREE, tank, map, physics, look, world, gun, targets, remotes, shells, bullets, fire, fireMg, net,
-    /** Hold the gun sight in tests (headless has no right mouse). */
-    setSighting(on: boolean | null) { sightOverride = on; },
+    THREE, player, rifle, map, physics, world, targets, remotes, bullets, fire, net, camera, sway,
+    /** Hold the scope / hold breath in tests (headless has no right mouse). */
+    setScoped(on: boolean | null) { scopeOverride = on; },
+    setHoldBreath(on: boolean) { breathOverride = on; },
+    /** Look at a world position, allowing for bullet drop so a scoped shot lands there. */
+    aimAt(x: number, y: number, z: number) {
+      const eye = player.pos.clone().setY(player.pos.y + player.eye);
+      const dx = x - eye.x, dy = y - eye.y, dz = z - eye.z, flatDist = Math.hypot(dx, dz);
+      player.yaw = Math.atan2(-dx, -dz);
+      player.pitch = Math.atan2(dy, flatDist) + drop(flatDist) - drop(ZERO_RANGE);
+      return Math.hypot(flatDist, dy);
+    },
     get phase() { return phase; },
     get dead() { return dead; },
     get scores() { return scores; },
-    /** Point the gun at a world position (tests). The gaze is moved there too, or it would pull the turret back. */
-    aimAt(x: number, y: number, z: number) {
-      const r = aimAtPoint(x, y, z);
-      look.yaw = tank.turretYawCmd;
-      look.pitch = tank.gunPitchCmd;
-      return r;
-    },
+    get scoped() { return scoped(); },
+    get recoil() { return recoil; },
     get lastHit() { return lastHit; },
-    get aimRange() { return aimRange; },
     get shotsFired() { return shotsFired; },
     get message() { return message; },
   };
-}
-
-const SYLLABLES = ['BLO', 'RK', 'GNA', 'HUP', 'ZO', 'KRA', 'MEE', 'OOG', 'FLA', 'TCH', 'NNG', 'WUB', 'SKO', 'PRT', 'GLUB', 'YAH'];
-/** Crew talk, as subtitled by someone who wasn't listening. */
-function gibberish(words: number) {
-  const pick = () => SYLLABLES[Math.floor(Math.random() * SYLLABLES.length)];
-  return Array.from({ length: words }, () => pick() + (Math.random() < 0.5 ? pick().toLowerCase() : '')).join(' ').toUpperCase();
-}
-
-const WRECK = new THREE.MeshLambertMaterial({ color: 0x110011 });
-/** Turn a tank model into a black wreck, or back. */
-function wreck(m: { root: THREE.Object3D }, on: boolean) {
-  m.root.traverse((o) => {
-    if (!(o instanceof THREE.Mesh)) return;
-    if (on) {
-      o.userData.mat ??= o.material;
-      o.material = WRECK;
-    } else if (o.userData.mat) o.material = o.userData.mat;
-  });
-}
-
-function clamp(v: number, limit: number) {
-  return Math.max(-limit, Math.min(limit, v));
-}
-/** Compass bearing in degrees, 0 = north (-z), 90 = east (+x). */
-function compass(x: number, z: number) {
-  return ((Math.atan2(x, -z) * 180) / Math.PI + 360) % 360;
 }
 
 start();

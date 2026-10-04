@@ -173,7 +173,7 @@ export function generateMap(seed: number): GameMap {
     for (let i = 0; i < count; i++) {
       const a = offset + (i / count) * Math.PI * 2;
       const x = Math.cos(a) * radius, z = Math.sin(a) * radius;
-      // Tank forward is -z; face the map centre.
+      // Forward is -z; face the map centre.
       spawns.push({ x, z, rotY: Math.atan2(x, z) });
     }
   };

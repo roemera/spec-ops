@@ -34,7 +34,7 @@ wss.on('connection', (ws: WebSocket, req) => {
 
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
-      // Tank state: stamp the sender's id and relay to everyone else.
+      // Soldier state: stamp the sender's id and relay to everyone else.
       if (!player || match.phase !== 'live') return;
       const bytes = new Uint8Array(data as Buffer);
       if (bytes.byteLength !== STATE_BYTES) return;
@@ -64,8 +64,6 @@ wss.on('connection', (ws: WebSocket, req) => {
       match.fire(player, msg);
     } else if (msg.t === 'hit' && player) {
       match.hit(player, msg);
-    } else if (msg.t === 'break' && player) {
-      match.breakObject(player, msg.id);
     } else if (msg.t === 'start' && player) {
       console.log(`[start] #${player.id} ${player.name} started the match`);
       match.forceStart();

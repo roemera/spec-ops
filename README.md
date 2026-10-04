@@ -3,8 +3,9 @@
 A browser co-op game: a small squad against AI, in the spirit of the winter sniper mission from
 Call of Duty Spec Ops. Clean low poly look (think Superhot).
 
-**Status:** just forked from Skeleton Crew, a multiplayer tank game. Run still works as written; Controls, Sound, Layout and Status
-still describe that tank game and will change as Spec Ops takes shape.
+**Status:** early. You play a soldier with a scoped bolt-action rifle on the inherited Skeleton Crew map
+(snowed over). Offline there is a practice range of red targets; online it is still the old free-for-all
+match flow until the AI and co-op missions arrive.
 
 Stack: TypeScript, Three.js, Rapier (WebAssembly physics), Vite. Everything (map, models, textures) is generated in code.
 
@@ -34,67 +35,53 @@ Ctrl+C stops both. PRACTICE OFFLINE on the join screen gives the single-player r
 binaries for your platform if npm skipped them (a known npm bug that shows up on Windows as
 "Cannot find native binding").
 
-The map is 400 m across, sized for a tight 1v1 (`MAP_SIZE` in `packages/shared/src/constants.ts`;
-the generator scales its layout to it).
+The map is 400 m across (`MAP_SIZE` in `packages/shared/src/constants.ts`; the generator scales its
+layout to it).
 
 URL options: `?offline` skips the menu, `?join=host:port&name=X&password=Y` joins directly,
 `?seed=123` picks the offline map, `?test` hides the click-to-play panel (for headless checks).
 
 ## Controls
 
-| Seat | Controls |
+| Key | Action |
 | --- | --- |
-| Any | 1 Driver, 2 Gunner, 3 Loader, 4 Lookout (0.6 s crawl, you control nothing meanwhile), hold Tab for the scoreboard |
-| Driver | W/S throttle lever (R full, R 1/2, stop, 1/4, 1/2, full), A/D steering lever, X centre, Space brake (held) |
-| Gunner | Mouse aims (turret follows at 24 deg/s), left click fires the cannon, hold middle button for the machine gun, right click 2x/4x zoom, Shift fine aim |
-| Loader | Free cursor: drag a shell from the rack into the open breech, Space opens/closes the breech |
-| Lookout | Mouse look, hold right click for 6x binoculars |
+| WASD | Move |
+| Shift | Sprint; while scoped, hold your breath (4 s, then you are winded and sway more) |
+| Space | Jump; from crouch or prone, stand up |
+| C / Z | Crouch / prone (press again to stand) |
+| Right mouse (hold) | Scope (12x). Sway is smallest prone, largest standing or moving |
+| Left mouse | Fire. Work the bolt after every shot (1.1 s) |
+| R | Reload (5-round magazine, 20 spare) |
+| Tab | Scores (online) |
 
-Levers stay where you leave them, so the tank keeps driving while you are in another seat.
+The rifle fires real bullets at 600 m/s with drop. The scope is zeroed at 100 m; the marks below the
+centre show where to hold for 200, 300 and 400 m. Moving targets need a lead.
 
-Firing opens the breech and empties it. Someone (you) has to crawl to the loader seat, drag a shell in
-and close the breech before the gun is ready again. The rack holds 6 and refills from storage (30)
-at one shell every 4 s.
-
-Damage: side hull hits kill in one shot, front and rear hull in two. If your crew is out as
-lookout (a little man sticks out of the hatch), any shell hit on your tank kills you (shrapnel),
-and so do 3 machine-gun bullets. The coaxial machine gun (unlimited, no recoil, bullets drop) can
-only hurt that man, never a tank.
-
-Dev key: F8 breaks a random part on your own tank, to see its effect.
+Damage: a head or body hit kills, two limb hits kill.
 
 ## Sound
 
-All sounds are generated in code (no files), low sample rate and bitcrushed. Outside sounds are
-positional (HRTF): you can hear where an engine or explosion is. They arrive late with distance
-(speed of sound) and are muffled while you are inside the tank; put your head out as lookout to
-hear clearly. Click or press a key once to start audio (browser rule).
+All sounds are generated in code (no files). Shots, impacts and footsteps are positional (HRTF) and
+arrive late with distance (speed of sound): you can hear where a shot came from and roughly how far.
+Footsteps are loud standing, quiet crouched and nearly silent prone. Click or press a key once to
+start audio (browser rule).
 
 ## Layout
 
 ```
 packages/
   shared/   constants.ts (tuning), mapgen.ts (seeded map), rng.ts
-  shared/   hitzones.ts (damage table, TankDamage), protocol.ts (messages, 52-byte tank state)
-  server/   main.ts (http + WebSocket on one port), match.ts (lobby, countdown, spawns), config.ts
-  client/   main.ts (loop), sim/tank.ts (physics), sim/gun.ts (breech, rack), sim/shells.ts (ballistics),
-            seats/, ui/ (HUD, loader station, bitmap font), render/ (low-res pipeline, vertex wobble,
-            textures), models/, world.ts, targets.ts (practice tanks), fx.ts, audio.ts,
-            net.ts (WebSocket client), remotes.ts (other players, interpolated), ui/menu.ts (join, lobby)
+  shared/   hitzones.ts (head/body/limb damage, Health), protocol.ts (messages, 36-byte soldier state)
+  server/   main.ts (http + WebSocket on one port), match.ts (lobby, countdown, spawns, kills), config.ts
+  client/   main.ts (loop: input, scope, breath, recoil, camera), sim/player.ts (character controller,
+            stances), sim/rifle.ts (magazine, bolt, reload), sim/bullets.ts (ballistics),
+            models/ (soldier, rifle), render/ (pipeline, palette), world.ts (map, light, shadows),
+            targets.ts (practice range), remotes.ts (other players, interpolated), fx.ts (trails,
+            puffs, shatter), audio.ts, net.ts, ui/hud.ts, ui/menu.ts
 ```
 
-## Status
+## Look
 
-- Milestone 1 (offline driving and seats): done.
-- Milestone 2 (offline shooting and loading, directional sound): done. Four practice tanks sit ahead
-  of the spawn; one drives in circles.
-- Milestone 3 (server, password, lobby, other tanks moving and colliding): done.
-- Milestone 4 (networked combat): done. The shooter's game reports hits, the server owns health,
-  breaks parts, counts kills; 5 s respawn with 3 s spawn protection; a shell exploding within 3 m
-  of a lookout's open hatch kills outright; first to the kill limit wins, 15 s results, then lobby.
-- Milestone 5 (destructible objects in sync): done. Whoever breaks a fence, tree or wall tells the
-  server; everyone sees it break, late joiners get the list, and everything stands again at the
-  next match. (Lookout spotting was dropped: the lookout's job is just to look.)
-- Milestone 6 (cursed extras): done. Gibberish crew voice lines with subtitles (firing, loading,
-  crawling, getting hit, parts breaking, kills, dying), a jerky death camera circling your burning
-  wreck, and a flashing, shaking results screen with an out-of-tune fanfare or a sad trombone.
+Clean low poly in the spirit of Superhot: flat-shaded geometry, a near-white snowy world, dark pines
+and rocks for cover, black rifles, red enemies. Full resolution with antialiasing and soft sun
+shadows; no textures. Colours live in `packages/client/src/render/palette.ts`.

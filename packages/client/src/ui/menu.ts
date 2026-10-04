@@ -1,38 +1,30 @@
 import type { Phase, PlayerInfo, Score } from '@spec-ops/shared';
 
-// Join screen and lobby: plain HTML over the game canvas, styled to hurt a little.
+// Join screen and lobby: plain HTML over the game canvas. White paper, dark ink, one red accent.
 
 const CSS = `
 #menu { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-  background: repeating-linear-gradient(45deg, #ff4fd8 0 12px, #a3127f 12px 24px);
-  font: bold 16px/1.3 "Courier New", monospace; color: #b6ff00; z-index: 10; }
-#menu.see-through { background: rgba(20,0,26,0.55); }
-#menu .box { background: #14001a; border: 6px solid #ffe600; padding: 20px 24px; width: min(420px, 90vw);
-  box-shadow: 10px 10px 0 #00ffe1; }
-#menu h1 { margin: 0 0 12px; color: #ff4fd8; font-size: 30px; letter-spacing: 2px; transform: skewX(-8deg); }
-#menu label { display: block; margin: 10px 0 2px; color: #ffe600; }
-#menu input { width: 100%; box-sizing: border-box; font: inherit; padding: 6px; background: #5b0fa8; color: #fff;
-  border: 3px solid #b6ff00; }
-#menu button { font: inherit; margin: 14px 8px 0 0; padding: 8px 14px; cursor: pointer; border: 3px solid #14001a;
-  background: #b6ff00; color: #14001a; box-shadow: 4px 4px 0 #ff4fd8; }
-#menu button.alt { background: #00ffe1; }
-#menu button:active { transform: translate(3px, 3px); box-shadow: 1px 1px 0 #ff4fd8; }
-#menu .error { color: #ff1f3d; min-height: 1.3em; margin-top: 10px; }
+  background: linear-gradient(#c9d5e2, #e8edf2 60%, #f3f5f7);
+  font: 600 14px/1.4 system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color: #1b1f23;
+  letter-spacing: 0.06em; z-index: 10; }
+#menu.see-through { background: rgba(232,237,242,0.6); }
+#menu .box { background: rgba(245,247,249,0.96); border-top: 4px solid #e3221a; padding: 28px 32px;
+  width: min(380px, calc(100vw - 32px)); box-sizing: border-box; box-shadow: 0 12px 40px rgba(27,31,35,0.15); }
+#menu h1 { margin: 0 0 18px; font-size: 32px; font-weight: 800; letter-spacing: 0.08em; }
+#menu label { display: block; margin: 14px 0 4px; font-size: 11px; color: rgba(27,31,35,0.55); }
+#menu input { width: 100%; box-sizing: border-box; font: inherit; padding: 8px 10px; background: #fff; color: #1b1f23;
+  border: 1px solid rgba(27,31,35,0.2); border-radius: 0; }
+#menu input:focus { outline: none; border-color: #1b1f23; }
+#menu button { font: inherit; margin: 18px 8px 0 0; padding: 10px 16px; cursor: pointer; border: 0;
+  background: #1b1f23; color: #fff; letter-spacing: 0.08em; }
+#menu button:hover { background: #e3221a; }
+#menu button.alt { background: transparent; color: #1b1f23; box-shadow: inset 0 0 0 1px rgba(27,31,35,0.3); }
+#menu button.alt:hover { box-shadow: inset 0 0 0 1px #1b1f23; }
+#menu .error { color: #e3221a; min-height: 1.4em; margin-top: 12px; font-size: 12px; }
 #menu ul { list-style: none; padding: 0; margin: 8px 0; }
-#menu li { padding: 3px 6px; margin: 3px 0; background: #2a0033; }
-#menu li.ready { color: #14001a; background: #b6ff00; }
-#menu .note { color: #00ffe1; font-size: 13px; margin-top: 10px; }
-/* Results: everything flashes and shakes, in steps so it stutters. */
-#menu.victory { animation: sc-bg 0.5s steps(2) infinite; }
-#menu.victory .box { animation: sc-jitter 0.25s steps(2) infinite; }
-#menu.victory h1 { font-size: 40px; transform: rotate(-4deg) scaleX(1.35); transform-origin: left;
-  animation: sc-flash 0.3s steps(2) infinite; }
-#menu.victory pre { margin: 0 0 6px; font: bold 18px/1 "Courier New", monospace; color: #ffe600;
-  animation: sc-spin 1.2s steps(6) infinite; display: inline-block; }
-@keyframes sc-bg { 0% { background: rgba(255,79,216,0.6); } 100% { background: rgba(0,255,225,0.45); } }
-@keyframes sc-jitter { 0% { transform: translate(-4px,2px) rotate(-1deg); } 100% { transform: translate(4px,-3px) rotate(1.5deg); } }
-@keyframes sc-flash { 0% { color: #ff4fd8; } 100% { color: #b6ff00; } }
-@keyframes sc-spin { 0% { transform: scaleX(1); } 50% { transform: scaleX(-1) skewY(8deg); } 100% { transform: scaleX(1); } }
+#menu li { padding: 8px 10px; margin: 4px 0; background: rgba(27,31,35,0.05); }
+#menu li.ready { background: #1b1f23; color: #fff; }
+#menu .note { color: rgba(27,31,35,0.55); font-size: 12px; margin-top: 12px; }
 `;
 
 export type JoinChoice = { mode: 'offline' } | { mode: 'online'; server: string; name: string; password: string };
@@ -40,14 +32,14 @@ export type JoinChoice = { mode: 'offline' } | { mode: 'online'; server: string;
 const store = {
   get: (k: string) => {
     try {
-      return localStorage.getItem('sc.' + k) ?? '';
+      return localStorage.getItem('specops.' + k) ?? '';
     } catch {
       return '';
     }
   },
   set: (k: string, v: string) => {
     try {
-      localStorage.setItem('sc.' + k, v);
+      localStorage.setItem('specops.' + k, v);
     } catch {
       /* private mode: fine */
     }
@@ -68,7 +60,7 @@ export class Menu {
 
   /** Ask how to play. Resolves when the player picks. */
   join(error = ''): Promise<JoinChoice> {
-    this.root.classList.remove('see-through', 'victory');
+    this.root.classList.remove('see-through');
     this.root.style.display = 'flex';
     this.root.innerHTML = `
       <form class="box">
@@ -77,14 +69,14 @@ export class Menu {
         <label>YOUR NAME</label><input name="name" maxlength="16" spellcheck="false">
         <label>PASSWORD</label><input name="password" type="password">
         <div class="error"></div>
-        <button type="submit">CLIMB IN</button><button type="button" class="alt">PRACTICE OFFLINE</button>
+        <button type="submit">JOIN</button><button type="button" class="alt">PRACTICE OFFLINE</button>
       </form>`;
     const form = this.root.querySelector('form')!;
     const field = (n: string) => form.querySelector<HTMLInputElement>(`input[name=${n}]`)!;
     field('server').value = store.get('server') || location.host;
-    field('name').value = store.get('name') || 'TANK' + Math.floor(Math.random() * 100);
+    field('name').value = store.get('name') || 'SOLDIER' + Math.floor(Math.random() * 100);
     field('password').value = store.get('password');
-    // Remember every field as it's typed (and the generated name), not only on CLIMB IN.
+    // Remember every field as it's typed (and the generated name), not only on JOIN.
     for (const n of ['server', 'name', 'password']) {
       store.set(n, field(n).value);
       field(n).addEventListener('input', () => store.set(n, n === 'password' ? field(n).value : field(n).value.trim()));
@@ -107,14 +99,13 @@ export class Menu {
   /** Lobby: who's here and who's ready. */
   lobby(players: PlayerInfo[], phase: Phase, countdown: number, myId: number, onReady: (ready: boolean) => void, onStart: () => void) {
     this.root.classList.add('see-through');
-    this.root.classList.remove('victory');
     this.root.style.display = 'flex';
     const me = players.find((p) => p.id === myId);
     const status =
       phase === 'countdown'
         ? `STARTING IN ${countdown}...`
         : players.length < 2
-          ? 'WAITING FOR MORE TANKS, OR PRESS START NOW'
+          ? 'WAITING FOR MORE PLAYERS, OR PRESS START NOW'
           : 'STARTS WHEN EVERYONE IS READY, OR WHEN ANYONE PRESSES START NOW';
     this.root.innerHTML = `
       <div class="box">
@@ -129,7 +120,7 @@ export class Menu {
 
   /** End of match: who won, the table, and how long until the lobby. */
   results(scores: Score[], winner: number, seconds: number, myId: number) {
-    this.root.classList.add('see-through', 'victory');
+    this.root.classList.add('see-through');
     this.root.style.display = 'flex';
     const name = scores.find((s) => s.id === winner)?.name ?? '???';
     const rows = scores
@@ -137,8 +128,7 @@ export class Menu {
       .join('');
     this.root.innerHTML = `
       <div class="box">
-        <pre>${winner === myId ? TROPHY : SKULL}</pre>
-        <h1>${winner === myId ? 'YOU WIN. SOMEHOW.' : `${escape(name)} WINS`}</h1>
+        <h1>${winner === myId ? 'YOU WIN' : `${escape(name)} WINS`}</h1>
         <ul>${rows}</ul>
         <div class="note">BACK TO THE LOBBY IN <span class="secs">${seconds}</span>...</div>
       </div>`;
@@ -155,14 +145,6 @@ export class Menu {
     this.root.style.display = 'none';
   }
 }
-
-const TROPHY = ` \\___/ 
- (  $  )
-  \\_/
-  _|_`;
-const SKULL = `  ___
- (x x)
-  |=|`;
 
 export function accuracy(s: Score) {
   return s.shots ? `${Math.round((100 * s.hits) / s.shots)}%` : '-';

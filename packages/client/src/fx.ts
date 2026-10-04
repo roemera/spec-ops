@@ -1,156 +1,180 @@
 import * as THREE from 'three';
+import { GRAVITY } from '@spec-ops/shared';
+import { PAL, flat } from './render/palette';
 
-// Cheap, loud effects. Animation is quantised to 12 steps per second so it stutters.
+// Clean, short effects: bullet trails that linger and fade, puffs of snow, and soldiers that
+// shatter into shards when they die. Smooth motion, no stutter.
 
-const STEP = 1 / 12;
-// No fog on effects: the acid-green fog turned yellow flashes green. Fire is red, smoke is black.
-const basic = (color: number) => new THREE.MeshBasicMaterial({ color, fog: false });
-const MAT = {
-  flash: basic(0xff1a00), // hits
-  muzzle: basic(0xffffff), // firing
-  hot: basic(0xff6a00),
-  smoke: basic(0x0a0006),
-  smokeLight: basic(0x1a1a1a),
-  tracer: basic(0xff3a1a),
-  bullet: basic(0xffd000),
-  dust: basic(0x4a3a2a),
-  fire: basic(0xff3000),
-};
-const SPHERE = new THREE.IcosahedronGeometry(1, 0);
-const CONE = new THREE.ConeGeometry(0.6, 1.6, 5);
+const TRAIL_FADE = 0.6; // s a trail lingers after its bullet stops
+const TRAIL_MAX = 150; // m of trail behind a bullet
+const SHARD = new THREE.TetrahedronGeometry(0.09, 0);
+const PUFF = new THREE.IcosahedronGeometry(1, 0);
 
-interface Effect {
-  obj: THREE.Object3D;
+interface Trail {
+  line: THREE.Line;
+  mat: THREE.LineBasicMaterial;
+  fade: number; // >0 once its bullet is gone: seconds left
+}
+
+interface Particle {
+  mesh: THREE.Mesh;
+  vel: THREE.Vector3;
+  spin: THREE.Vector3;
   age: number;
   life: number;
-  tick: (e: Effect, t: number) => void; // t = quantised age
+  gravity: number;
+  grow: number; // scale change per second (puffs grow, shards don't)
+  baseScale: number;
 }
 
 export class Fx {
-  private effects: Effect[] = [];
-  private tracers = new Map<number, THREE.Mesh>();
-  private bulletTracers = new Map<number, THREE.Mesh>();
-  private static BULLET_GEO = new THREE.BoxGeometry(0.08, 0.08, 2.5);
+  private trails = new Map<number, Trail>();
+  private fading: Trail[] = [];
+  private particles: Particle[] = [];
+  private flashes: Array<{ obj: THREE.Object3D; life: number }> = [];
 
-  /** Small yellow streaks for machine-gun bullets. */
-  syncBulletTracers(bullets: ReadonlyArray<{ id: number; pos: THREE.Vector3; vel: THREE.Vector3 }>) {
+  constructor(private scene: THREE.Scene, private groundAt: (x: number, z: number) => number) {}
+
+  /** Draw a line from each bullet's muzzle to where it is now; fade out lines of bullets that stopped. */
+  syncTrails(bullets: ReadonlyArray<{ id: number; start: THREE.Vector3; pos: THREE.Vector3 }>) {
     const seen = new Set<number>();
     for (const b of bullets) {
       seen.add(b.id);
-      let m = this.bulletTracers.get(b.id);
-      if (!m) {
-        m = new THREE.Mesh(Fx.BULLET_GEO, MAT.bullet);
-        this.bulletTracers.set(b.id, m);
-        this.scene.add(m);
+      let tr = this.trails.get(b.id);
+      if (!tr) {
+        const mat = new THREE.LineBasicMaterial({ color: PAL.trail, transparent: true, opacity: 0.7 });
+        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([b.start, b.pos]), mat);
+        line.frustumCulled = false;
+        tr = { line, mat, fade: 0 };
+        this.trails.set(b.id, tr);
+        this.scene.add(tr.line);
       }
-      m.position.copy(b.pos);
-      m.lookAt(b.pos.clone().add(b.vel));
+      this.setTrail(tr, b.start, b.pos);
     }
-    for (const [id, m] of this.bulletTracers) {
+    for (const [id, tr] of this.trails) {
       if (seen.has(id)) continue;
-      this.scene.remove(m);
-      this.bulletTracers.delete(id);
+      this.trails.delete(id);
+      tr.fade = TRAIL_FADE;
+      this.fading.push(tr);
     }
   }
 
-  /** A bullet hit something hard: a tiny dark puff. Hitting a person: a red one. */
-  puff(pos: THREE.Vector3, blood = false) {
-    const p = new THREE.Mesh(SPHERE, blood ? MAT.flash : MAT.dust);
-    p.position.copy(pos);
-    this.add(p, 0.3, (e, t) => e.obj.scale.setScalar(0.25 + t * 1.5));
+  /** A stopped bullet's trail ends where it hit (the last sync may be one step short). */
+  endTrail(id: number, at: THREE.Vector3) {
+    const tr = this.trails.get(id);
+    if (!tr) return;
+    const p = tr.line.geometry.attributes.position as THREE.BufferAttribute;
+    this.setTrail(tr, new THREE.Vector3(p.getX(0), p.getY(0), p.getZ(0)), at);
   }
 
-  constructor(private scene: THREE.Scene) {}
+  private setTrail(tr: Trail, start: THREE.Vector3, end: THREE.Vector3) {
+    const from = start.distanceTo(end) > TRAIL_MAX ? end.clone().addScaledVector(start.clone().sub(end).normalize(), TRAIL_MAX) : start;
+    const p = tr.line.geometry.attributes.position as THREE.BufferAttribute;
+    p.setXYZ(0, from.x, from.y, from.z);
+    p.setXYZ(1, end.x, end.y, end.z);
+    p.needsUpdate = true;
+  }
 
-  explosion(pos: THREE.Vector3, size = 1) {
-    const flash = new THREE.Mesh(SPHERE, MAT.flash);
-    flash.position.copy(pos);
-    this.add(flash, 0.35, (e, t) => e.obj.scale.setScalar(size * (1 + t * 14)));
-    // A short orange fireball, then black smoke that hangs around.
+  muzzleFlash(pos: THREE.Vector3, dir: THREE.Vector3, scene = this.scene) {
+    const m = new THREE.Mesh(PUFF, new THREE.MeshBasicMaterial({ color: PAL.flash, fog: false }));
+    m.position.copy(pos).addScaledVector(dir, 0.08);
+    m.scale.set(0.07, 0.07, 0.07);
+    scene.add(m);
+    this.flashes.push({ obj: m, life: 0.05 });
+  }
+
+  /** A bullet hit snow, rock or wood: a soft puff, coloured like what it hit. */
+  impact(pos: THREE.Vector3, normal: THREE.Vector3, color: number = PAL.snow) {
+    for (let i = 0; i < 4; i++) {
+      const vel = normal.clone().multiplyScalar(1.5 + Math.random()).add(rand(0.8));
+      this.particle(PUFF, flat(color, { transparent: true }), pos, vel, 0.6, 0.6, 0.12, 0.5);
+    }
+  }
+
+  /** A soldier hit but standing: a little red burst. */
+  wound(pos: THREE.Vector3, dir: THREE.Vector3, color: number) {
+    const mat = flat(color);
     for (let i = 0; i < 6; i++) {
-      const fireball = i < 2;
-      const puff = new THREE.Mesh(SPHERE, fireball ? MAT.hot : MAT.smoke);
-      const drift = new THREE.Vector3(Math.random() - 0.5, 0.8 + Math.random(), Math.random() - 0.5).multiplyScalar(2.5 * size);
-      puff.position.copy(pos);
-      this.add(puff, fireball ? 0.45 : 1.8 + Math.random(), (e, t) => {
-        e.obj.position.copy(pos).addScaledVector(drift, t);
-        e.obj.scale.setScalar(size * (1 + t * 2.5) * Math.max(0, 1 - t / e.life));
-        e.obj.rotation.set(t * 3, t * 2, 0);
-      });
+      const vel = dir.clone().multiplyScalar(2 + Math.random() * 2).add(rand(1.5));
+      this.particle(SHARD, mat, pos, vel, 0.5, 1, 1, 0);
     }
   }
 
-  muzzleFlash(pos: THREE.Vector3, dir: THREE.Vector3) {
-    const flash = new THREE.Mesh(SPHERE, MAT.muzzle);
-    flash.position.copy(pos).addScaledVector(dir, 1);
-    this.add(flash, 0.15, (e, t) => e.obj.scale.set(1.2, 1.2, 1.2).multiplyScalar(1 + t * 8));
-    // Smoke blows off to the sides quickly so the gunner can see the shell land.
-    const side = new THREE.Vector3(dir.z, 0, -dir.x).normalize();
-    for (let i = 0; i < 4; i++) {
-      const puff = new THREE.Mesh(SPHERE, MAT.smokeLight);
-      const at = pos.clone().addScaledVector(dir, 0.5);
-      const drift = side.clone().multiplyScalar(i % 2 ? 9 : -9).add(new THREE.Vector3(0, 3, 0));
-      this.add(puff, 0.6, (e, t) => {
-        e.obj.position.copy(at).addScaledVector(drift, t);
-        e.obj.scale.setScalar((0.4 + t * 1.5) * Math.max(0, 1 - t / e.life));
-      });
-    }
-  }
-
-  /** A burning wreck: flickering fire cones above a point, until `life` runs out. */
-  fire(pos: THREE.Vector3, life: number) {
-    for (let i = 0; i < 4; i++) {
-      const cone = new THREE.Mesh(CONE, i % 2 ? MAT.fire : MAT.flash);
-      const off = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).multiplyScalar(2);
-      this.add(cone, life, (e, t) => {
-        e.obj.position.copy(pos).add(off);
-        const flick = 0.7 + 0.5 * Math.abs(Math.sin(t * 9 + i * 2));
-        e.obj.scale.set(1, flick * 1.4, 1);
-        e.obj.position.y += flick * 0.8;
-      });
-    }
-  }
-
-  /** Draw tracers for live shells; remove tracers for shells that are gone. */
-  syncTracers(shells: ReadonlyArray<{ id: number; pos: THREE.Vector3; vel: THREE.Vector3 }>) {
-    const seen = new Set<number>();
-    for (const s of shells) {
-      seen.add(s.id);
-      let m = this.tracers.get(s.id);
-      if (!m) {
-        m = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 7), MAT.tracer);
-        this.tracers.set(s.id, m);
-        this.scene.add(m);
+  /** A soldier dies: every body part bursts into shards that fly with the bullet and settle on the snow. */
+  shatter(parts: THREE.Mesh[], dir: THREE.Vector3, color: number) {
+    const mat = flat(color);
+    const p = new THREE.Vector3();
+    for (const part of parts) {
+      part.getWorldPosition(p);
+      for (let i = 0; i < 7; i++) {
+        const vel = dir.clone().multiplyScalar(2 + Math.random() * 4).add(rand(2.5)).add(new THREE.Vector3(0, 1.5, 0));
+        this.particle(SHARD, mat, p.clone().add(rand(0.12)), vel, 2.5 + Math.random(), 1, 1 + Math.random(), 0);
       }
-      m.position.copy(s.pos);
-      m.lookAt(s.pos.clone().add(s.vel));
-    }
-    for (const [id, m] of this.tracers) {
-      if (seen.has(id)) continue;
-      this.scene.remove(m);
-      m.geometry.dispose();
-      this.tracers.delete(id);
     }
   }
 
-  private add(obj: THREE.Object3D, life: number, tick: Effect['tick']) {
-    this.scene.add(obj);
-    const e = { obj, age: 0, life, tick };
-    tick(e, 0);
-    this.effects.push(e);
+  private particle(geo: THREE.BufferGeometry, mat: THREE.Material, pos: THREE.Vector3, vel: THREE.Vector3, life: number, gravity: number, scale: number, grow: number) {
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.copy(pos);
+    mesh.scale.setScalar(scale);
+    mesh.rotation.set(Math.random() * 6, Math.random() * 6, 0);
+    mesh.castShadow = geo === SHARD;
+    this.scene.add(mesh);
+    this.particles.push({ mesh, vel, spin: rand(12), age: 0, life, gravity, grow, baseScale: scale });
   }
 
   update(dt: number) {
-    for (let i = this.effects.length - 1; i >= 0; i--) {
-      const e = this.effects[i];
-      const before = Math.floor(e.age / STEP);
-      e.age += dt;
-      if (e.age >= e.life) {
-        this.scene.remove(e.obj);
-        this.effects.splice(i, 1);
+    for (let i = this.flashes.length - 1; i >= 0; i--) {
+      const f = this.flashes[i];
+      f.life -= dt;
+      if (f.life <= 0) {
+        f.obj.removeFromParent();
+        ((f.obj as THREE.Mesh).material as THREE.Material).dispose();
+        this.flashes.splice(i, 1);
+      }
+    }
+    for (let i = this.fading.length - 1; i >= 0; i--) {
+      const tr = this.fading[i];
+      tr.fade -= dt;
+      tr.mat.opacity = 0.7 * Math.max(0, tr.fade / TRAIL_FADE);
+      if (tr.fade <= 0) {
+        this.scene.remove(tr.line);
+        tr.line.geometry.dispose();
+        tr.mat.dispose();
+        this.fading.splice(i, 1);
+      }
+    }
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.age += dt;
+      if (p.age >= p.life) {
+        this.scene.remove(p.mesh);
+        if (p.grow) (p.mesh.material as THREE.Material).dispose(); // each puff has its own (it fades)
+        this.particles.splice(i, 1);
         continue;
       }
-      if (Math.floor(e.age / STEP) !== before) e.tick(e, Math.floor(e.age / STEP) * STEP);
+      const m = p.mesh;
+      p.vel.y -= GRAVITY * p.gravity * dt;
+      m.position.addScaledVector(p.vel, dt);
+      const ground = this.groundAt(m.position.x, m.position.z);
+      if (m.position.y < ground) {
+        // Land and stay: shards lie on the snow until they fade.
+        m.position.y = ground;
+        p.vel.set(0, 0, 0);
+        p.spin.set(0, 0, 0);
+      } else {
+        m.rotation.x += p.spin.x * dt;
+        m.rotation.y += p.spin.y * dt;
+      }
+      const k = p.age / p.life;
+      if (p.grow) {
+        m.scale.setScalar(p.baseScale * (1 + p.grow * p.age * 8));
+        (m.material as THREE.MeshLambertMaterial).opacity = 1 - k;
+      } else if (k > 0.7) m.scale.setScalar(p.baseScale * (1 - k) / 0.3); // shrink away at the end
     }
   }
+}
+
+function rand(s: number) {
+  return new THREE.Vector3((Math.random() - 0.5) * 2 * s, (Math.random() - 0.5) * 2 * s, (Math.random() - 0.5) * 2 * s);
 }

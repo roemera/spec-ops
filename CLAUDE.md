@@ -3,9 +3,8 @@
 Browser co-op game: a small squad of players against AI, in the spirit of the winter sniper mission
 from Call of Duty Spec Ops (snowy terrain, long sightlines, patrols to slip past or pick off).
 
-The code started as a copy of Skeleton Crew (a multiplayer tank game). The tank sim, seats, loader
-station and PvP match flow are inherited and still to be replaced; keep the plumbing (workspaces,
-server, protocol, map gen, render pipeline, audio) and rework it as needed.
+The code started as a copy of Skeleton Crew (a multiplayer tank game). The soldier, rifle and look are
+new; the map layout and the PvP match flow (lobby, kill limit) are inherited and still to be replaced.
 
 ## Direction
 
@@ -29,5 +28,6 @@ server, protocol, map gen, render pipeline, audio) and rework it as needed.
 - Check: `npm run typecheck` and `npm run build`.
 - Run: `npm run dev` (game server + Vite together; default password `changeme`); `?test&offline` for headless single-player checks,
   `?test&join=localhost:5173&name=A&password=pw` for multiplayer ones (hides the click-to-play
-  panel). `window.__game` exposes the game state for scripted tests (currently still the tank,
-  gun, targets, `fire()` and `aimAt()`).
+  panel). `window.__game` exposes the player, rifle, targets, remotes, `fire()`, `aimAt(x, y, z)`
+  (allows for bullet drop), `setScoped()` and `setHoldBreath()` for scripted tests.
+- Colours live in `packages/client/src/render/palette.ts`; every mesh uses `flat()` from there.
