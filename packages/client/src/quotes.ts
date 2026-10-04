@@ -124,9 +124,35 @@ export const QUOTES: Quote[] = [
   { text: 'I need the kind of generals that Hitler had.', when: 'Reported by John Kelly', source: 'The Atlantic, October 22, 2024' },
 ];
 
-/** The next quote, dealt from a shuffled deck so none repeats until all have shown. */
-let deck: Quote[] = [];
+/**
+ * The next quote, dealt from a shuffled deck so none repeats until all have shown. The deck is
+ * remembered across page loads (the ones still to come, by index), so a fresh session carries on
+ * where the last one stopped instead of starting over.
+ */
+const DECK_KEY = 'spec-ops.quoteDeck';
+let deck: number[] | null = null;
 export function nextQuote(): Quote {
-  if (!deck.length) deck = [...QUOTES].sort(() => Math.random() - 0.5);
-  return deck.pop()!;
+  if (!deck) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(DECK_KEY) ?? 'null');
+      if (Array.isArray(saved) && saved.every((i) => Number.isInteger(i) && i >= 0 && i < QUOTES.length)) deck = saved;
+    } catch {
+      // No storage (private window): a fresh deck each load.
+    }
+  }
+  if (!deck?.length) {
+    // Fisher-Yates: every order equally likely (sorting with a random comparator is badly biased).
+    deck = QUOTES.map((_, i) => i);
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+  }
+  const q = QUOTES[deck.pop()!];
+  try {
+    localStorage.setItem(DECK_KEY, JSON.stringify(deck));
+  } catch {
+    // Not remembered: fine.
+  }
+  return q;
 }
