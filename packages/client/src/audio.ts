@@ -16,6 +16,8 @@ interface SoundDef {
   /** Several takes, one picked at random each play (default 1). */
   variants?: number;
   gen: (variant: number) => Gen;
+  /** A loop: render this many s more and crossfade the end into the start, so it wraps seamlessly. */
+  loopFade?: number;
 }
 
 /** A short click: a burst of noise with a ring at `freq`. */
@@ -73,6 +75,23 @@ const scraper = () => {
     return band * grit * Math.sin(Math.PI * k) * amp * 2.5;
   };
 };
+
+/** One take of a sound as samples: generated, looped if it loops, soft clipped. */
+export function renderSound(name: SoundName, variant: number): Float32Array<ArrayBuffer> {
+  const def = GENERATORS[name];
+  const len = Math.floor(def.seconds * RATE), fade = Math.floor((def.loopFade ?? 0) * RATE);
+  const g = def.gen(variant), rnd = makeRng(name.length * 977 + variant * 31).next;
+  const raw = new Float32Array(len + fade);
+  for (let i = 0; i < raw.length; i++) raw[i] = g(i / RATE, rnd) * 0.5;
+  // Equal-power crossfade: the extra tail fades out over the start as the start fades in.
+  for (let i = 0; i < fade; i++) {
+    const k = (i / fade) * (Math.PI / 2);
+    raw[i] = raw[i] * Math.sin(k) + raw[len + i] * Math.cos(k);
+  }
+  const out = new Float32Array(len);
+  for (let i = 0; i < len; i++) out[i] = soften(raw[i]);
+  return out;
+}
 
 /** Soft clip: untouched below 0.8, rounding off toward 1 above (no harsh digital clipping). */
 export function soften(x: number) {
@@ -258,34 +277,43 @@ export const GENERATORS: Record<SoundName, SoundDef> = {
       };
     },
   },
-  // Loopable wind, 12 s: irregular gusts (several slow swells that don't line up, so it doesn't
-  // breathe like surf), a hiss through the pines that brightens as a gust builds, and a thin howl
-  // whose pitch rises with it. Every modulation fits a whole number of times into 12 s, so it loops.
+  // Wind, after Andy Farnell's model (Designing Sound, "Practical 18: Wind"). One control signal,
+  // the wind's strength, drives everything: a slow swell, plus gusts (noise low-passed twice at
+  // 0.5 Hz, so they wander), plus squalls (noise low-passed at 3 Hz, gated so only its peaks get
+  // through). That strength sets the level of a broad band of noise around 800 Hz, and both the
+  // level and the pitch of two narrow resonances (Q 60), the whistle, which rise as it blows
+  // harder. Crossfaded into a 20 s loop.
   wind: {
-    seconds: 12,
+    seconds: 20,
+    loopFade: 3,
     gen: () => {
-      const L = 12;
-      const hissHi = lowpass(0.5), hissLo = lowpass(0.04), rumble = lowpass(0.004);
-      // Two resonant band-passes (state-variable filters) for the howl.
-      const howl = (q: number) => {
+      const lp = (fc: number) => {
+        const a = 1 - Math.exp((-2 * Math.PI * fc) / RATE);
+        let y = 0;
+        return (x: number) => (y += a * (x - y));
+      };
+      /** Resonant band-pass (state-variable filter), unity gain at the centre. */
+      const bp = (q: number) => {
         let low = 0, band = 0;
         return (x: number, fc: number) => {
-          const f = 2 * Math.sin((Math.PI * fc) / RATE);
+          const f = 2 * Math.sin((Math.PI * fc) / RATE), d = 1 / q;
           low += f * band;
-          const high = x - low - q * band;
+          const high = x - low - d * band;
           band += f * high;
-          return band;
+          return band * d;
         };
       };
-      const h1 = howl(0.04), h2 = howl(0.06);
-      const w = (k: number, t: number, ph: number) => Math.sin((2 * Math.PI * k * t) / L + ph);
+      const gustA = lp(0.5), gustB = lp(0.5), squallA = lp(3), squallB = lp(3);
+      const body = bp(1), whistle1 = bp(60), whistle2 = bp(60), rumble = lp(120);
       return (t, r) => {
         const n = r() * 2 - 1;
-        const g0 = 0.5 + 0.22 * w(1, t, 1.3) + 0.16 * w(3, t, 0.4) + 0.1 * w(5, t, 2.2) + 0.05 * w(23, t, 0.9) + 0.03 * w(41, t, 2.7);
-        const gust = Math.max(0, g0) ** 1.6; // peaky: lulls, then a gust
-        const hiss = (hissHi(n) - hissLo(n)) * (0.25 + 0.9 * gust);
-        const tone = (h1(n, 380 + 420 * gust) * 0.05 + h2(n, 610 + 520 * gust) * 0.035) * gust;
-        return (hiss * 1.6 + tone + rumble(n) * 6 * (0.3 + gust)) * 1.1;
+        const swell = 0.45 + 0.15 * Math.sin(2 * Math.PI * 0.1 * t) + 0.08 * Math.sin(2 * Math.PI * 0.035 * t + 1);
+        const gust = gustB(gustA(n)) * 130 * (swell + 0.375);
+        const squall = Math.max(0, squallB(squallA(r() * 2 - 1)) * 40 - 0.4) * 1.4;
+        const c = Math.max(0.05, Math.min(1.3, swell + gust + squall));
+        const air = body(n, 800) * c * 1.8;
+        const howl = (whistle1(n, 600 + 400 * c) * 5.5 + whistle2(n, 1000 + 450 * c) * 3) * c * c;
+        return (air + howl + rumble(n) * 2.2 * c) * 1.7;
       };
     },
   },
@@ -318,14 +346,12 @@ export class Audio {
     this.master = ctx.createGain();
     this.master.gain.value = 0.6;
     this.master.connect(ctx.destination);
-    for (const [name, { seconds, gen, variants = 1 }] of Object.entries(GENERATORS) as Array<[SoundName, SoundDef]>) {
+    for (const [name, { seconds, variants = 1 }] of Object.entries(GENERATORS) as Array<[SoundName, SoundDef]>) {
       const takes: AudioBuffer[] = [];
       for (let v = 0; v < variants; v++) {
         const len = Math.floor(seconds * RATE);
         const buf = ctx.createBuffer(1, len, RATE);
-        const data = buf.getChannelData(0);
-        const g = gen(v), rnd = makeRng(name.length * 977 + v * 31).next;
-        for (let i = 0; i < len; i++) data[i] = soften(g(i / RATE, rnd) * 0.5);
+        buf.copyToChannel(renderSound(name, v), 0);
         takes.push(buf);
       }
       this.buffers.set(name, takes);
