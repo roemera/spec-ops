@@ -1,4 +1,4 @@
-import { RELOAD_TIME } from '@skeleton-crew/shared';
+import { RELOAD_TIME } from '@spec-ops/shared';
 
 /** The cannon reloads itself RELOAD_TIME after every shot. Unlimited shells. */
 export class Gun {

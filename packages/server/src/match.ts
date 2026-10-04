@@ -1,7 +1,7 @@
 import {
   COUNTDOWN_SECONDS, MAX_PLAYERS, RESPAWN_DELAY, RESULTS_TIME, SPAWN_PROTECTION, TankDamage, generateMap,
   type ClientMsg, type Phase, type PlayerInfo, type Score, type ServerMsg, type Spawn,
-} from '@skeleton-crew/shared';
+} from '@spec-ops/shared';
 
 export interface Player {
   id: number;

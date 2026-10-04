@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { DEFAULT_PORT } from '@skeleton-crew/shared';
+import { DEFAULT_PORT } from '@spec-ops/shared';
 
 export interface Config {
   port: number;

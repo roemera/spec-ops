@@ -1,5 +1,5 @@
 {
-  "name": "skeleton-crew",
+  "name": "spec-ops",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -9,10 +9,10 @@
     "predev": "node scripts/ensure-native.mjs",
     "dev": "node scripts/dev.mjs",
     "predev:client": "node scripts/ensure-native.mjs",
-    "dev:client": "npm run dev -w @skeleton-crew/client",
+    "dev:client": "npm run dev -w @spec-ops/client",
     "server": "node packages/server/src/main.ts",
     "prebuild": "node scripts/ensure-native.mjs",
-    "build": "npm run build -w @skeleton-crew/client",
+    "build": "npm run build -w @spec-ops/client",
     "start": "npm run build && npm run server",
     "typecheck": "tsc -p packages/shared --noEmit && tsc -p packages/server --noEmit && tsc -p packages/client --noEmit"
   }

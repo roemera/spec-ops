@@ -4,7 +4,7 @@ import {
   BARREL_LENGTH, GRAVITY, TankDamage, type Part,
   GUN_ELEVATION_RATE, GUN_MAX_ELEVATION, GUN_MIN_ELEVATION, HULL_HALF, HULL_TURN_RATE, STEER_STEP,
   TANK_MASS, THROTTLE_STEPS, TOP_SPEED_FORWARD, TOP_SPEED_REVERSE, TURRET_TURN_RATE, type Spawn,
-} from '@skeleton-crew/shared';
+} from '@spec-ops/shared';
 
 // Suspension: 5 rays per side from the hull floor.
 const SUSP_X = 1.4;

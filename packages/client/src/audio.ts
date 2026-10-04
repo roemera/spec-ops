@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { makeRng } from '@skeleton-crew/shared';
+import { makeRng } from '@spec-ops/shared';
 
 // All sounds are generated at startup: low sample rate, crushed to a few bits.
 // Outside sounds are positional (HRTF), delayed by the speed of sound, and muffled while you are inside the tank.

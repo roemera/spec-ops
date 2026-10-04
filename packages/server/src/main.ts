@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { PROTOCOL_VERSION, STATE_BYTES, decodeState, type ClientMsg, type ServerMsg } from '@skeleton-crew/shared';
+import { PROTOCOL_VERSION, STATE_BYTES, decodeState, type ClientMsg, type ServerMsg } from '@spec-ops/shared';
 import { loadConfig } from './config.ts';
 import { serveStatic } from './static.ts';
 import { Match, type Player } from './match.ts';
@@ -91,7 +91,7 @@ wss.on('connection', (ws: WebSocket, req) => {
 type Tagged = WebSocket & { playerId?: number };
 
 http.listen(config.port, () => {
-  console.log(`Skeleton Crew server on port ${config.port}, map seed ${config.mapSeed}, ${config.password ? 'password set' : 'NO password'}`);
+  console.log(`Spec Ops server on port ${config.port}, map seed ${config.mapSeed}, ${config.password ? 'password set' : 'NO password'}`);
   console.log('Players open http://<this machine>:' + config.port + '   Commands: start, players, help');
 });
 

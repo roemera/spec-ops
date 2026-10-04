@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { makeRng } from '@skeleton-crew/shared';
+import { makeRng } from '@spec-ops/shared';
 
 // All textures are tiny canvases drawn at startup: unfiltered, badly tiled, loud.
 

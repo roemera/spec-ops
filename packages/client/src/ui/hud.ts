@@ -1,4 +1,4 @@
-import { PART_LABEL, RENDER_HEIGHT as H, RENDER_WIDTH as W, TANK_HEALTH, type Score } from '@skeleton-crew/shared';
+import { PART_LABEL, RENDER_HEIGHT as H, RENDER_WIDTH as W, TANK_HEALTH, type Score } from '@spec-ops/shared';
 import type { TankSim } from '../sim/tank';
 import type { Gun } from '../sim/gun';
 import { accuracy } from './menu';
@@ -267,7 +267,7 @@ export class Hud {
     const ctx = this.ctx;
     ctx.fillStyle = 'rgba(20,0,26,0.85)';
     ctx.fillRect(40, 40, 400, 110);
-    drawText(ctx, 'SKELETON CREW', 240, 52, C.pink, 3, 'center');
+    drawText(ctx, 'SPEC OPS', 240, 52, C.pink, 3, 'center');
     drawText(ctx, 'CLICK TO CLIMB IN', 240, 80, C.lime, 2, 'center');
     const help = [
       'MOUSE LOOK - THE TURRET FOLLOWS YOUR GAZE',

@@ -1,4 +1,4 @@
-import type { Phase, PlayerInfo, Score } from '@skeleton-crew/shared';
+import type { Phase, PlayerInfo, Score } from '@spec-ops/shared';
 
 // Join screen and lobby: plain HTML over the game canvas, styled to hurt a little.
 
@@ -72,7 +72,7 @@ export class Menu {
     this.root.style.display = 'flex';
     this.root.innerHTML = `
       <form class="box">
-        <h1>SKELETON CREW</h1>
+        <h1>SPEC OPS</h1>
         <label>SERVER</label><input name="server" spellcheck="false">
         <label>YOUR NAME</label><input name="name" maxlength="16" spellcheck="false">
         <label>PASSWORD</label><input name="password" type="password">

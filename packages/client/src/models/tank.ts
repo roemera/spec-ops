@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BARREL_LENGTH, HULL_HALF } from '@skeleton-crew/shared';
+import { BARREL_LENGTH, HULL_HALF } from '@spec-ops/shared';
 import { GUN_OFFSET, TURRET_OFFSET } from '../sim/tank';
 import { tex } from '../render/textures';
 import { wobble } from '../render/pipeline';

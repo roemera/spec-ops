@@ -1,16 +1,21 @@
-# Skeleton Crew
+# Spec Ops
 
-Browser multiplayer tank game: one player is the whole crew (driver, gunner, loader, lookout).
-Design doc: https://claude.ai/code/artifact/6ed43f7e-4ee7-4297-b6c4-ff1759a31cf7
+Browser co-op game: a small squad of players against AI, in the spirit of the winter sniper mission
+from Call of Duty Spec Ops (snowy terrain, long sightlines, patrols to slip past or pick off).
+
+The code started as a copy of Skeleton Crew (a multiplayer tank game). The tank sim, seats, loader
+station and PvP match flow are inherited and still to be replaced; keep the plumbing (workspaces,
+server, protocol, map gen, render pipeline, audio) and rework it as needed.
 
 ## Direction
 
-- **Cursed beats polished.** If a sound or animation would take real work to do well, do it badly on
-  purpose: stutter, stretch, wrong pitch, noise voices. Matches the Cruelty Squad look, saves time,
-  keeps the game simple. Spend polish only where it changes how the game plays.
-- Everything is generated in code: map (seeded), models (boxes/cylinders), textures (tiny canvases),
-  sounds (procedural, bitcrushed). No asset files.
-- No minimap and no spotting markers. Information comes from looking (lookout seat) and directional sound.
+- **Clean low poly, Superhot-like.** Flat-shaded simple geometry, a stark limited palette, crisp
+  full-resolution rendering. No pixelation, vertex wobble or dithering from the old low-res look.
+- **Spend polish only where it changes how the game plays.** If a sound or animation would take real
+  work to do well, keep it simple and stylised rather than detailed.
+- Everything is generated in code: map (seeded), models (boxes/cylinders/low poly meshes), textures
+  (tiny canvases, if any), sounds (procedural). No asset files.
+- No minimap and no spotting markers. Information comes from looking and directional sound.
 - Trusted clients, dev-run server, password to join. No anti-cheat, no matchmaking.
 
 ## Code
@@ -24,4 +29,5 @@ Design doc: https://claude.ai/code/artifact/6ed43f7e-4ee7-4297-b6c4-ff1759a31cf7
 - Check: `npm run typecheck` and `npm run build`.
 - Run: `npm run dev` (game server + Vite together; default password `changeme`); `?test&offline` for headless single-player checks,
   `?test&join=localhost:5173&name=A&password=pw` for multiplayer ones (hides the click-to-play
-  panel). `window.__game` exposes the tank, gun, targets, `fire()` and `aimAt()` for scripted tests.
+  panel). `window.__game` exposes the game state for scripted tests (currently still the tank,
+  gun, targets, `fire()` and `aimAt()`).

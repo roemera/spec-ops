@@ -1,5 +1,5 @@
 {
-  "name": "@skeleton-crew/shared",
+  "name": "@spec-ops/shared",
   "private": true,
   "type": "module",
   "main": "src/index.ts",

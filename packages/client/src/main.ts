@@ -4,7 +4,7 @@ import {
   GUN_MAX_ELEVATION, GUN_MIN_ELEVATION, MG_RATE, MG_SPEED, MG_SPREAD, PART_LABEL, PHYSICS_HZ, RENDER_HEIGHT,
   RENDER_WIDTH, RESPAWN_DELAY, SHELL_SPEED, SPAWN_PROTECTION, STATE_HZ, ZONE_LABEL, generateMap, hullZone,
   type HitZone, type Part, type Phase, type Score, type ServerMsg,
-} from '@skeleton-crew/shared';
+} from '@spec-ops/shared';
 import { Pipeline } from './render/pipeline';
 import { World } from './world';
 import { buildTankModel, TRACK_TEXTURE_LENGTH } from './models/tank';

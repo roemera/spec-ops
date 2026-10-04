@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { MAP_SIZE, RESPAWN_DELAY, type GameMap, type Spawn } from '@skeleton-crew/shared';
+import { MAP_SIZE, RESPAWN_DELAY, type GameMap, type Spawn } from '@spec-ops/shared';
 import { TankSim } from './sim/tank';
 import { buildTankModel, TRACK_TEXTURE_LENGTH, type TankModel } from './models/tank';
 import type { Audio, Loop } from './audio';

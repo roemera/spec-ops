@@ -1,7 +1,7 @@
 import {
   PROTOCOL_VERSION, decodeState, encodeState,
   type ClientMsg, type HitZone, type ServerMsg, type TankState,
-} from '@skeleton-crew/shared';
+} from '@spec-ops/shared';
 
 type Vec3 = [number, number, number];
 

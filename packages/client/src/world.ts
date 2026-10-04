@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { DESTRUCT_SPEED, FOG_FAR, FOG_NEAR, type GameMap, type MapObject, makeRng } from '@skeleton-crew/shared';
+import { DESTRUCT_SPEED, FOG_FAR, FOG_NEAR, type GameMap, type MapObject, makeRng } from '@spec-ops/shared';
 import { tex } from './render/textures';
 import { wobble } from './render/pipeline';
 

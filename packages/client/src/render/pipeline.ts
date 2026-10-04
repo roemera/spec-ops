@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { VIEW_HEIGHT, VIEW_WIDTH } from '@skeleton-crew/shared';
+import { VIEW_HEIGHT, VIEW_WIDTH } from '@spec-ops/shared';
 
 // Low-res render -> colour-crushed, dithered post pass -> nearest-neighbour upscale (CSS).
 

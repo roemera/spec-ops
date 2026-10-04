@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { GRAVITY, MG_LIFETIME } from '@skeleton-crew/shared';
+import { GRAVITY, MG_LIFETIME } from '@spec-ops/shared';
 
 /** Bullets: member of group 5; hit solid things (not sensors, not debris). */
 const BULLET_GROUPS = 0x0010_fffd;

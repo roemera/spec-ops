@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { INTERP_DELAY, type TankState } from '@skeleton-crew/shared';
+import { INTERP_DELAY, type TankState } from '@spec-ops/shared';
 import { TankSim } from './sim/tank';
 import { buildTankModel, MAN_CENTER, MAN_HALF, TRACK_TEXTURE_LENGTH, type TankModel } from './models/tank';
 import type { Audio, Loop } from './audio';

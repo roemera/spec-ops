@@ -1,5 +1,5 @@
 {
-  "name": "@skeleton-crew/client",
+  "name": "@spec-ops/client",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",
-    "@skeleton-crew/shared": "*",
+    "@spec-ops/shared": "*",
     "three": "^0.186.1"
   },
   "devDependencies": {

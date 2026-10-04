@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { GRAVITY, SHELL_LIFETIME } from '@skeleton-crew/shared';
+import { GRAVITY, SHELL_LIFETIME } from '@spec-ops/shared';
 
 /** Shells: member of group 4, hit everything except debris (group 2). */
 const SHELL_GROUPS = 0x0008_fffd;

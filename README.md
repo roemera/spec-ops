@@ -1,7 +1,10 @@
-# Skeleton Crew
+# Spec Ops
 
-A browser tank game where you are the whole crew: driver, gunner, loader and lookout, one seat at a time.
-Switching seats takes 0.6 seconds. Design doc: https://claude.ai/code/artifact/6ed43f7e-4ee7-4297-b6c4-ff1759a31cf7
+A browser co-op game: a small squad against AI, in the spirit of the winter sniper mission from
+Call of Duty Spec Ops. Clean low poly look (think Superhot).
+
+**Status:** just forked from Skeleton Crew, a multiplayer tank game. Run still works as written; Controls, Sound, Layout and Status
+still describe that tank game and will change as Spec Ops takes shape.
 
 Stack: TypeScript, Three.js, Rapier (WebAssembly physics), Vite. Everything (map, models, textures) is generated in code.
 

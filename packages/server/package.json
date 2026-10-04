@@ -1,12 +1,12 @@
 {
-  "name": "@skeleton-crew/server",
+  "name": "@spec-ops/server",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node src/main.ts"
   },
   "dependencies": {
-    "@skeleton-crew/shared": "*",
+    "@spec-ops/shared": "*",
     "ws": "^8.22.0"
   },
   "devDependencies": {
