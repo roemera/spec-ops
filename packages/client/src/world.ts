@@ -239,13 +239,22 @@ export class World {
       new THREE.Matrix4().compose(new THREE.Vector3(o.x, o.y + y, o.z), q, new THREE.Vector3(sxz, sy, sxz));
     if (o.kind === 'deadTree') {
       chunk.trunks.push(m(-0.3, 0.22, h + 0.3));
-      this.physics.createCollider(RAPIER.ColliderDesc.cylinder(h / 2, 0.25).setTranslation(o.x, o.y + h / 2, o.z));
+      this.trunkColliders(o, [[0, h * 0.5, 0.19], [h * 0.5, h, 0.14]]);
       return;
     }
     // Bare trunk up to about a third of the height: you can see (and shoot) under the branches.
     chunk.trunks.push(m(-0.3, 0.28, h * 0.45 + 0.3)); // sunk a little so slopes don't show a gap
     for (let i = 0; i < 3; i++) chunk.cones.push(m(h * (0.36 + i * 0.19), w * (1 - i * 0.27), h * 0.4));
-    this.physics.createCollider(RAPIER.ColliderDesc.cylinder(h / 2, 0.35).setTranslation(o.x, o.y + h / 2, o.z));
+    // The visible trunk tapers and stops under the branches; above that only a thin core, hidden in them.
+    this.trunkColliders(o, [[0, h * 0.22, 0.23], [h * 0.22, h * 0.45, 0.18], [h * 0.45, h, 0.12]]);
+  }
+
+  /** Stacked cylinders (from, to, radius above the base) that follow a tapering trunk, so shots
+   * only stop on bark you can see. */
+  private trunkColliders(o: MapObject, parts: Array<[number, number, number]>) {
+    for (const [y0, y1, r] of parts) {
+      this.physics.createCollider(RAPIER.ColliderDesc.cylinder((y1 - y0) / 2, r).setTranslation(o.x, o.y + (y0 + y1) / 2, o.z));
+    }
   }
 
   private buildTrees() {
