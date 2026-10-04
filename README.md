@@ -161,6 +161,10 @@ with gloved hands in first person. Every texture is drawn in code into a small c
 into one mesh per material (`render/merge.ts`) to keep draw calls down. Full resolution with
 antialiasing and soft sun shadows.
 
+Low junipers grow in clumps along the edges of the woods and out in the open: soft cover. Crouch or
+lie behind one and the enemy sees only a glimpse of you (as through pine branches); bullets go
+straight through, and an enemy laser stops in it.
+
 The snow keeps a record: everyone standing or crouching leaves boot prints (yours, your squad's and
 the enemy's: you can read where a patrol went), which fill in with snow after a couple of minutes
 (sooner in heavy snow). The killed fall the way the shot pushed them and stay where they dropped, in

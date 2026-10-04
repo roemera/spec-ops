@@ -6,7 +6,7 @@ import { makeNoise2, makeRng, type Rng } from './rng.ts';
 // point on one edge to the extraction pad on the opposite one, past a few outposts.
 // Server and clients run this with the same seed and get the same map.
 
-export type MapObjectKind = 'tree' | 'deadTree' | 'log' | 'rock' | 'cabin' | 'tower' | 'wall' | 'pad';
+export type MapObjectKind = 'tree' | 'deadTree' | 'shrub' | 'log' | 'rock' | 'cabin' | 'tower' | 'wall' | 'pad';
 
 export interface MapObject {
   id: number; // fixed, from generation order
@@ -227,6 +227,22 @@ export function generateMap(seed: number): GameMap {
     const rot = rng.range(0, Math.PI), r = rng.range(0.3, 0.45), l = rng.range(4, 7.5);
     if (forest(x, z) < 0.45 || inClearing(x, z, 4) || toCreek(x, z) < CREEK_HALF + 2 || slopeAt(x, z) > 0.5) continue;
     add('log', x, z, rot, [l, r * 2, r * 2]);
+  }
+
+  // Shrubs: low snowy juniper along the forest's edges and in the open, in loose clumps. Soft
+  // cover: crouch or lie behind one and you're hard to see (bullets go straight through).
+  for (let i = 0; i < 420; i++) {
+    const x = rng.range(-half + RIM, half - RIM), z = rng.range(-half + RIM, half - RIM);
+    const clump = rng.int(1, 4), spread = rng.range(1.5, 3.5);
+    const f = forest(x, z);
+    const keep = f > 0.28 && f < 0.6 ? 1 : 0.35; // most at the edges of the woods
+    if (rng.next() > keep) continue;
+    for (let k = 0; k < clump; k++) {
+      const sx = x + rng.range(-spread, spread), sz = z + rng.range(-spread, spread);
+      const w = rng.range(1.6, 2.8), h = w * rng.range(0.55, 0.8), rot = rng.range(0, Math.PI * 2);
+      if (inClearing(sx, sz, 2) || toCreek(sx, sz) < CREEK_HALF + 1 || slopeAt(sx, sz) > 0.8 || toRoute(sx, sz) < 2.5) continue;
+      add('shrub', sx, sz, rot, [w, h, w]);
+    }
   }
 
   // --- Spawns ---

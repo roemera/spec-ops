@@ -41,6 +41,9 @@ export class Obstacles {
           this.add({ k: 'cyl', x: o.x, z: o.z, r: 0.2, y0: o.y - 1, y1: o.y + h, soft: false, move: true }); // the trunk, as drawn
           this.add({ k: 'cyl', x: o.x, z: o.z, r: w * 0.55, y0: o.y + h * 0.36, y1: o.y + h * 0.9, soft: true, move: false });
           break;
+        case 'shrub':
+          this.add({ k: 'cyl', x: o.x, z: o.z, r: w * 0.42, y0: o.y - 0.2, y1: o.y + h * 0.9, soft: true, move: false });
+          break;
         case 'deadTree':
           this.add({ k: 'cyl', x: o.x, z: o.z, r: 0.17, y0: o.y - 1, y1: o.y + h, soft: false, move: true });
           break;

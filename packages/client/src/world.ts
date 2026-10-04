@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { FOG_FAR, FOG_NEAR, SHADOW_RANGE, SURFACE, type GameMap, type MapObject, type Rng, type Weather, makeRng } from '@spec-ops/shared';
-import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PAL } from './render/palette';
 import { boxUV, textures } from './render/textures';
 import { mergeWorld } from './render/merge';
@@ -21,7 +21,46 @@ const PUFF = new THREE.IcosahedronGeometry(1, 1);
 interface TreeChunk {
   trunks: THREE.Matrix4[];
   cones: THREE.Matrix4[];
+  shrubs: THREE.Matrix4[][]; // one list per shrub shape
 }
+
+/**
+ * Shrub shapes (unit width, unit height, base at y = 0): a few lumpy, squashed blobs merged into
+ * one low poly bush. Faces that look up carry snow; the sides are dark juniper green.
+ */
+const SHRUBS = [1, 2, 3].map((seed) => {
+  const rng = makeRng(seed * 7919);
+  const parts: THREE.BufferGeometry[] = [];
+  const lumps = 3 + rng.int(0, 2);
+  for (let i = 0; i < lumps; i++) {
+    const a = (i / lumps) * Math.PI * 2 + rng.range(-0.4, 0.4), d = i === 0 ? 0 : rng.range(0.12, 0.25);
+    const r = i === 0 ? 0.36 : rng.range(0.2, 0.3);
+    const g = new THREE.IcosahedronGeometry(r, 1);
+    const p = g.attributes.position;
+    for (let k = 0; k < p.count; k++) p.setXYZ(k, p.getX(k) * rng.range(0.9, 1.1), p.getY(k) * rng.range(0.85, 1.05), p.getZ(k) * rng.range(0.9, 1.1));
+    g.scale(1, 1.25, 1).translate(Math.cos(a) * d, r * 0.9 + rng.range(-0.05, 0.08), Math.sin(a) * d);
+    parts.push(g.toNonIndexed());
+  }
+  const geo = mergeGeometries(parts)!;
+  // Flatten into the ground: nothing below y = 0, height normalized to 1.
+  const p = geo.attributes.position;
+  let top = 0;
+  for (let k = 0; k < p.count; k++) {
+    p.setY(k, Math.max(0, p.getY(k)));
+    top = Math.max(top, p.getY(k));
+  }
+  geo.scale(1, 1 / top, 1);
+  geo.computeVertexNormals();
+  boxUV(geo, 0.6);
+  const col = new Float32Array(p.count * 3), n = geo.attributes.normal;
+  const snow = new THREE.Color(0xd8e0e8), green = new THREE.Color(0x34503f), dark = new THREE.Color(0x24382d);
+  for (let k = 0; k < p.count; k += 3) {
+    const c = n.getY(k) > 0.8 && rng.next() < 0.7 ? snow : rng.next() < 0.5 ? green : dark;
+    for (let j = 0; j < 3; j++) col.set([c.r, c.g, c.b], (k + j) * 3);
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
+});
 
 /** Builds the generated map into a Three.js scene and a Rapier world. */
 export class World {
@@ -179,7 +218,7 @@ export class World {
 
   private buildObject(o: MapObject) {
     const [w, h, d] = o.size;
-    if (o.kind === 'tree' || o.kind === 'deadTree') return this.addTree(o);
+    if (o.kind === 'tree' || o.kind === 'deadTree' || o.kind === 'shrub') return this.addTree(o);
     const group = new THREE.Group();
     group.position.set(o.x, o.y, o.z);
     group.rotation.y = o.rotY;
@@ -362,10 +401,16 @@ export class World {
     const [w, h] = o.size;
     const key = `${Math.floor(o.x / CHUNK)},${Math.floor(o.z / CHUNK)}`;
     let chunk = this.chunks.get(key);
-    if (!chunk) this.chunks.set(key, (chunk = { trunks: [], cones: [] }));
+    if (!chunk) this.chunks.set(key, (chunk = { trunks: [], cones: [], shrubs: SHRUBS.map(() => []) }));
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), o.rotY);
     const m = (y: number, sxz: number, sy: number) =>
       new THREE.Matrix4().compose(new THREE.Vector3(o.x, o.y + y, o.z), q, new THREE.Vector3(sxz, sy, sxz));
+    if (o.kind === 'shrub') {
+      chunk.shrubs[o.id % SHRUBS.length].push(m(-0.1, w, h + 0.1));
+      // Lasers stop in it (a sensor: bullets and boots go through).
+      this.physics.createCollider(RAPIER.ColliderDesc.cylinder(h * 0.4, w * 0.4).setSensor(true).setTranslation(o.x, o.y + h * 0.45, o.z));
+      return;
+    }
     if (o.kind === 'deadTree') {
       chunk.trunks.push(m(-0.3, 0.22, h + 0.3));
       this.trunkColliders(o, [[0, h * 0.5, 0.19], [h * 0.5, h, 0.14]]);
@@ -398,6 +443,7 @@ export class World {
     const needleMap = textures().needles.clone();
     needleMap.repeat.set(3, 1.5);
     const needles = new THREE.MeshLambertMaterial({ map: needleMap });
+    const shrubMat = new THREE.MeshLambertMaterial({ map: textures().snow, vertexColors: true, flatShading: true });
     const add = (geo: THREE.BufferGeometry, material: THREE.Material, list: THREE.Matrix4[]) => {
       if (!list.length) return;
       const im = new THREE.InstancedMesh(geo, material, list.length);
@@ -409,6 +455,7 @@ export class World {
     for (const c of this.chunks.values()) {
       add(TRUNK, bark, c.trunks);
       add(CONE, needles, c.cones);
+      c.shrubs.forEach((list, i) => add(SHRUBS[i], shrubMat, list));
     }
   }
 
