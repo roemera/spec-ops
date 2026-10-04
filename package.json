@@ -1,0 +1,19 @@
+{
+  "name": "skeleton-crew",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "predev": "node scripts/ensure-native.mjs",
+    "dev": "node scripts/dev.mjs",
+    "predev:client": "node scripts/ensure-native.mjs",
+    "dev:client": "npm run dev -w @skeleton-crew/client",
+    "server": "node packages/server/src/main.ts",
+    "prebuild": "node scripts/ensure-native.mjs",
+    "build": "npm run build -w @skeleton-crew/client",
+    "start": "npm run build && npm run server",
+    "typecheck": "tsc -p packages/shared --noEmit && tsc -p packages/server --noEmit && tsc -p packages/client --noEmit"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "port": 8080,
+  "password": "changeme",
+  "mapSeed": 1337,
+  "killLimit": 10
+}
