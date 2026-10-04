@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { FOG_FAR, FOG_NEAR, SHADOW_RANGE, SURFACE, type GameMap, type MapObject, type Weather, makeRng } from '@spec-ops/shared';
+import { FOG_FAR, FOG_NEAR, SHADOW_RANGE, SURFACE, type GameMap, type MapObject, type Rng, type Weather, makeRng } from '@spec-ops/shared';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PAL, flatShared } from './render/palette';
 
 const SUN_DIR = new THREE.Vector3(0.45, 0.8, 0.3).normalize();
@@ -158,12 +159,8 @@ export class World {
 
     switch (o.kind) {
       case 'rock': {
-        const geo = new THREE.IcosahedronGeometry(1, 0);
-        const rng = makeRng(o.id + 1000);
-        const p = geo.attributes.position;
-        for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i) * rng.range(0.7, 1.2), p.getY(i) * rng.range(0.7, 1.2), p.getZ(i) * rng.range(0.7, 1.2));
+        const geo = boulder(makeRng(o.id + 1000));
         geo.scale(w / 2, h / 2, d / 2);
-        geo.computeVertexNormals();
         mesh(geo, PAL.rock, 0, h * 0.25, 0); // half buried
         this.solid(o, RAPIER.ColliderDesc.convexHull(geo.attributes.position.array as Float32Array)!, new THREE.Vector3(0, h * 0.25, 0));
         break;
@@ -288,4 +285,42 @@ export class World {
     this.sun.target.position.copy(c);
     this.sun.position.copy(c).addScaledVector(SUN_DIR, 200);
   }
+}
+
+/**
+ * A closed, faceted boulder about 2 units across: an icosphere with its shared corners welded (so
+ * faces can't tear apart), shaped by a few broad bulges and dents, some per-corner roughness, a few
+ * flat cleaved faces, and a flattened base that sits in the snow.
+ */
+function boulder(rng: Rng): THREE.BufferGeometry {
+  const base = new THREE.IcosahedronGeometry(1, 1);
+  base.deleteAttribute('normal');
+  base.deleteAttribute('uv');
+  const geo = mergeVertices(base);
+  const bumps = Array.from({ length: 5 }, () => ({
+    dir: new THREE.Vector3(rng.range(-1, 1), rng.range(-0.6, 1), rng.range(-1, 1)).normalize(),
+    k: rng.range(-0.22, 0.3),
+  }));
+  // A few cleaved faces: everything beyond a plane is pressed flat onto it.
+  const cuts = Array.from({ length: 3 }, () => ({
+    n: new THREE.Vector3(rng.range(-1, 1), rng.range(-0.2, 1), rng.range(-1, 1)).normalize(),
+    at: rng.range(0.6, 0.85),
+  }));
+  const p = geo.attributes.position, v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    let r = 1 + rng.range(-0.1, 0.1);
+    for (const b of bumps) r += b.k * Math.max(0, v.dot(b.dir)) ** 2;
+    v.multiplyScalar(r);
+    for (const c of cuts) {
+      const over = v.dot(c.n) - c.at;
+      if (over > 0) v.addScaledVector(c.n, -over);
+    }
+    if (v.y < -0.35) v.y = -0.35 + (v.y + 0.35) * 0.25; // flat underneath
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  // Back to separate faces so flat shading gives every facet its own crisp tone.
+  const out = geo.toNonIndexed();
+  out.computeVertexNormals();
+  return out;
 }
