@@ -19,7 +19,7 @@ import { addViewArms, buildRifle } from './models/rifle';
 import { strideFor } from './models/soldier';
 import { Input } from './input';
 import { Hud, HUD_COLORS, type CompassMarker } from './ui/hud';
-import { QUOTES, type Quote } from './quotes';
+import { nextQuote, type Quote } from './quotes';
 import { Fx } from './fx';
 import { Audio } from './audio';
 import { Enemies } from './enemies';
@@ -143,12 +143,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   // Your life this mission: up, down (bleeding out until a teammate revives you) or out.
   let life: Life = 'up';
   let down: { by: string; zone: string; until: number; quote: Quote } | null = null;
-  // Death-screen quotes, dealt from a shuffled deck so none repeats until all have shown.
-  let quoteDeck: Quote[] = [];
-  const nextQuote = () => {
-    if (!quoteDeck.length) quoteDeck = [...QUOTES].sort(() => Math.random() - 0.5);
-    return quoteDeck.pop()!;
-  };
+  let lobbyQuote = nextQuote(); // the squad screen's quote: the same until the next mission ends
   let protectedUntil = 0, hurtAt = -10;
   let scores: Score[] = [];
   const names = new Map<number, string>();
@@ -304,7 +299,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   let sendTimer = 0;
   {
     const showLobby = (players: Parameters<Menu['lobby']>[0], countdown: number) =>
-      menu.lobby(players, phase, countdown, net.id, (ready) => net.setReady(ready), () => net.startMatch());
+      menu.lobby(players, phase, countdown, net.id, (ready) => net.setReady(ready), () => net.startMatch(), lobbyQuote);
     if (phase !== 'live') showLobby(welcome.players, 0);
     else menu.hide();
     for (const p of welcome.players) if (p.id !== net.id) remotes.setLife(p.id, p.life, time);
@@ -419,7 +414,8 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       } else if (msg.t === 'results') {
         scores = msg.scores;
         input.unlock();
-        menu.results(msg.success, msg.time, msg.scores, msg.seconds, net.id);
+        menu.results(msg.success, msg.time, msg.scores, msg.seconds, net.id, nextQuote());
+        lobbyQuote = nextQuote();
         audio.jingle(msg.success);
       }
     };

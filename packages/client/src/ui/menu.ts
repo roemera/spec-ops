@@ -1,4 +1,5 @@
 import type { Phase, PlayerInfo, Score } from '@spec-ops/shared';
+import type { Quote } from '../quotes';
 
 // Join screen and lobby: plain HTML over the game canvas. White paper, dark ink, one red accent.
 
@@ -25,6 +26,9 @@ const CSS = `
 #menu li { padding: 8px 10px; margin: 4px 0; background: rgba(27,31,35,0.05); }
 #menu li.ready { background: #1b1f23; color: #fff; }
 #menu .note { color: rgba(27,31,35,0.55); font-size: 12px; margin-top: 12px; }
+#menu .quote { margin-top: 22px; padding-top: 16px; border-top: 1px solid rgba(27,31,35,0.15); max-width: 460px; }
+#menu .quote p { margin: 0; font: italic 500 15px/1.5 Georgia, "Times New Roman", serif; color: #1b1f23; letter-spacing: 0; }
+#menu .quote .by { margin-top: 8px; font-size: 10px; color: rgba(27,31,35,0.55); }
 #menu h1.good { color: #1b1f23; }
 #menu h1.bad { color: #e3221a; }
 #menu table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
@@ -126,7 +130,7 @@ export class Menu {
   }
 
   /** Lobby: who's here and who's ready. */
-  lobby(players: PlayerInfo[], phase: Phase, countdown: number, myId: number, onReady: (ready: boolean) => void, onStart: () => void) {
+  lobby(players: PlayerInfo[], phase: Phase, countdown: number, myId: number, onReady: (ready: boolean) => void, onStart: () => void, quote: Quote) {
     this.root.classList.add('see-through');
     this.root.style.display = 'flex';
     const me = players.find((p) => p.id === myId);
@@ -140,13 +144,14 @@ export class Menu {
         <ul>${players.map((p) => `<li class="${p.ready ? 'ready' : ''}">${p.id === myId ? '&gt; ' : ''}${escape(p.name)}${p.ready ? ' - READY' : ''}</li>`).join('')}</ul>
         <div class="note">${status}</div>
         ${phase === 'lobby' ? `<button class="ready">${me?.ready ? 'NOT READY' : 'READY'}</button><button class="alt start">START NOW</button>` : ''}
+        ${quoteHtml(quote)}
       </div>`;
     this.root.querySelector('button.ready')?.addEventListener('click', () => onReady(!me?.ready));
     this.root.querySelector('button.start')?.addEventListener('click', onStart);
   }
 
   /** End of the mission: extracted or not, how long it took, and what everyone did. */
-  results(success: boolean, time: number, scores: Score[], seconds: number, myId: number) {
+  results(success: boolean, time: number, scores: Score[], seconds: number, myId: number, quote: Quote) {
     this.root.classList.add('see-through');
     this.root.style.display = 'flex';
     const rows = scores
@@ -158,6 +163,7 @@ export class Menu {
         <div class="note">${success ? 'THE SQUAD MADE IT OUT' : 'NOBODY LEFT STANDING'} IN ${Math.floor(time / 60)}:${String(time % 60).padStart(2, '0')}</div>
         <table><tr><th>SOLDIER</th><th>KILLS</th><th>REVIVES</th><th>DOWNS</th><th>HIT</th></tr>${rows}</table>
         <div class="note">NEXT MISSION, NEW MAP: BACK TO THE SQUAD IN <span class="secs">${seconds}</span>...</div>
+        ${quoteHtml(quote)}
       </div>`;
     const el = this.root.querySelector('.secs')!;
     let left = seconds;
@@ -179,4 +185,9 @@ export function accuracy(s: Score) {
 
 function escape(s: string) {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+}
+
+/** A quote under a menu, with who said it and when. */
+function quoteHtml(q: Quote) {
+  return `<div class="quote"><p>“${escape(q.text)}”</p><div class="by">— DONALD J. TRUMP  ·  ${escape(q.when.toUpperCase())}</div></div>`;
 }

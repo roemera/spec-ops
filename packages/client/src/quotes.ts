@@ -123,3 +123,10 @@ export const QUOTES: Quote[] = [
   { text: 'Why should I go to that cemetery? It’s filled with losers.', when: 'Reported by The Atlantic, of a 2018 visit to France', source: 'The Atlantic, September 3, 2020; confirmed by John Kelly, 2023' },
   { text: 'I need the kind of generals that Hitler had.', when: 'Reported by John Kelly', source: 'The Atlantic, October 22, 2024' },
 ];
+
+/** The next quote, dealt from a shuffled deck so none repeats until all have shown. */
+let deck: Quote[] = [];
+export function nextQuote(): Quote {
+  if (!deck.length) deck = [...QUOTES].sort(() => Math.random() - 0.5);
+  return deck.pop()!;
+}
