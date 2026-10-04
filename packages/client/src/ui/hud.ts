@@ -1,5 +1,6 @@
 import { ACTIVE_RELOAD, BULLET_SPEED, GRAVITY, PLAYER_HEALTH, type Score, type Stance } from '@spec-ops/shared';
 import { accuracy } from './menu';
+import type { Quote } from '../quotes';
 
 // Full-resolution HUD on a 2D canvas over the 3D view. Minimal and flat: dark ink on the bright
 // snow, red for danger and kills, white only inside the black scope.
@@ -38,7 +39,7 @@ export interface HudState {
   message: { text: string; color: string } | null;
   scores: Score[] | null; // shown while Tab is held (online only)
   myId: number;
-  down: { by: string; zone: string; bleedOut: number; help: boolean; out: boolean } | null; // help: a teammate is still up
+  down: { by: string; zone: string; bleedOut: number; help: boolean; out: boolean; quote: Quote | null } | null; // help: a teammate is still up
   revive: { name: string; progress: number } | null; // next to a downed teammate
   protectedFor: number; // s of spawn protection left
   hurt: number; // 0..1 red flash after being hit
@@ -322,7 +323,8 @@ export class Hud {
     g.addColorStop(1, d.out ? 'rgba(245,247,249,0.8)' : 'rgba(227,34,26,0.55)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
-    const y = h * 0.38;
+    const y = h * 0.3;
+    if (d.quote) this.drawQuote(d.quote, y + 160);
     if (d.out) {
       this.text('OUT', w / 2, y, 64, C.ink, 'center', 800);
       this.text('YOU BLED OUT  ·  WAITING FOR THE SQUAD', w / 2, y + 52, 15, C.ink, 'center');
@@ -332,6 +334,31 @@ export class Hud {
     this.text(`HIT BY ${d.by}  ·  ${d.zone}`, w / 2, y + 52, 15, C.ink, 'center');
     this.text(`BLEEDING OUT  ${Math.max(0, Math.ceil(d.bleedOut))}`, w / 2, y + 82, 20, C.red, 'center', 800);
     this.text(d.help ? 'A TEAMMATE CAN GET YOU UP: STAY PUT' : 'NOBODY LEFT STANDING TO GET YOU UP', w / 2, y + 112, 13, C.inkSoft, 'center');
+  }
+
+  /** A death-screen quote, wrapped, centred, with who said it and when underneath. */
+  private drawQuote(q: Quote, top: number) {
+    const { ctx, w } = this;
+    const size = 17, lineH = 25, maxW = Math.min(640, w - 64);
+    ctx.font = `italic 500 ${size}px Georgia, "Times New Roman", serif`;
+    ctx.letterSpacing = '0px';
+    const lines: string[] = [];
+    let line = '';
+    for (const word of `“${q.text}”`.split(' ')) {
+      const next = line ? `${line} ${word}` : word;
+      if (line && ctx.measureText(next).width > maxW) {
+        lines.push(line);
+        line = word;
+      } else line = next;
+    }
+    lines.push(line);
+    ctx.fillStyle = 'rgba(245,247,249,0.75)';
+    ctx.fillRect(w / 2 - maxW / 2 - 24, top - 24, maxW + 48, lines.length * lineH + 64);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = C.ink;
+    lines.forEach((l, i) => ctx.fillText(l, w / 2, top + i * lineH));
+    this.text(`— DONALD J. TRUMP  ·  ${q.when.toUpperCase()}`, w / 2, top + lines.length * lineH + 12, 11, C.inkSoft, 'center', 700);
   }
 
   /** Next to a downed teammate: hold E. */

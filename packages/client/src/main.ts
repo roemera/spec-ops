@@ -19,6 +19,7 @@ import { addViewArms, buildRifle } from './models/rifle';
 import { strideFor } from './models/soldier';
 import { Input } from './input';
 import { Hud, HUD_COLORS, type CompassMarker } from './ui/hud';
+import { QUOTES, type Quote } from './quotes';
 import { Fx } from './fx';
 import { Audio } from './audio';
 import { Enemies } from './enemies';
@@ -141,7 +142,13 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   const health = new Health();
   // Your life this mission: up, down (bleeding out until a teammate revives you) or out.
   let life: Life = 'up';
-  let down: { by: string; zone: string; until: number } | null = null;
+  let down: { by: string; zone: string; until: number; quote: Quote } | null = null;
+  // Death-screen quotes, dealt from a shuffled deck so none repeats until all have shown.
+  let quoteDeck: Quote[] = [];
+  const nextQuote = () => {
+    if (!quoteDeck.length) quoteDeck = [...QUOTES].sort(() => Math.random() - 0.5);
+    return quoteDeck.pop()!;
+  };
   let protectedUntil = 0, hurtAt = -10;
   let scores: Score[] = [];
   const names = new Map<number, string>();
@@ -381,7 +388,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
         scores = msg.scores;
         if (msg.id === net.id) {
           life = 'down';
-          down = { by: nameOf(msg.by), zone: ZONE_LABEL[msg.zone], until: time + msg.bleedOut };
+          down = { by: nameOf(msg.by), zone: ZONE_LABEL[msg.zone], until: time + msg.bleedOut, quote: nextQuote() };
           health.health = 0;
           scopeT = 0;
           player.setStance('prone');
@@ -700,7 +707,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       scores: input.isHeld('Tab') ? scores : null,
       myId: net.id,
       down: playing() && life !== 'up'
-        ? { by: down?.by ?? 'THE ENEMY', zone: down?.zone ?? '', bleedOut: (down?.until ?? time) - time, help: [...remotes.byId.values()].some((r) => r.life === 'up'), out: life === 'dead' }
+        ? { by: down?.by ?? 'THE ENEMY', zone: down?.zone ?? '', bleedOut: (down?.until ?? time) - time, help: [...remotes.byId.values()].some((r) => r.life === 'up'), out: life === 'dead', quote: down?.quote ?? null }
         : null,
       revive: reviving && { name: nameOf(reviving.id), progress: reviving.progress },
       protectedFor: Math.max(0, protectedUntil - time),
