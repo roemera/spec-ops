@@ -7,7 +7,7 @@ import { makeRng } from '@spec-ops/shared';
 const RATE = 22050;
 const SPEED_OF_SOUND = 343; // m/s
 
-export type SoundName = 'shot' | 'bolt' | 'reload' | 'dry' | 'step' | 'impact' | 'hit' | 'shatter' | 'wind' | 'shout' | 'huh';
+export type SoundName = 'shot' | 'bolt' | 'reload' | 'dry' | 'step' | 'impact' | 'hit' | 'shatter' | 'wind' | 'shout' | 'huh' | 'hurt' | 'headshot';
 
 type Gen = (t: number, rnd: () => number) => number;
 
@@ -95,6 +95,26 @@ const GENERATORS: Record<SoundName, { seconds: number; gen: () => Gen }> = {
         return 2 * lp * Math.exp(-t * 25) + 0.4 * Math.sin(2 * Math.PI * 160 * t) * Math.exp(-t * 30);
       };
     },
+  },
+  // You're hit: a sharp snap, a heavy thump in the chest, and a grunt.
+  hurt: {
+    seconds: 0.6,
+    gen: () => {
+      const grunt = voice(0.35, (t) => 150 - 70 * t, 600, 1100, (t) => Math.min(1, t / 0.02) * Math.exp(-((t - 0.08) ** 2) / 0.012));
+      return (t, r) => {
+        const snap = (r() * 2 - 1) * 1.4 * Math.exp(-t * 260);
+        const thump = Math.sin(2 * Math.PI * (85 - 70 * t) * t) * 1.8 * Math.exp(-t * 11);
+        return snap + thump + (t > 0.05 ? 0.8 * grunt(t - 0.05, r) : 0);
+      };
+    },
+  },
+  // Your bullet found a head: a bright metallic ding (inharmonic partials, like struck steel).
+  headshot: {
+    seconds: 0.8,
+    gen: () => (t, r) =>
+      0.5 * click(t, 0, 3200, r) +
+      (Math.sin(2 * Math.PI * 1850 * t) + 0.55 * Math.sin(2 * Math.PI * 1850 * 2.76 * t) + 0.25 * Math.sin(2 * Math.PI * 1850 * 5.4 * t)) *
+        0.6 * Math.exp(-t * 6),
   },
   // A bullet into a body: a dull thump.
   hit: {

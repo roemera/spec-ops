@@ -87,16 +87,21 @@ too, takes a knee and shoots, and runs to where it last saw you if you break lin
 
 They see you sooner close up, standing, moving and in front of them, and much later prone, still,
 far away, at the edge of their view or behind pine branches. They hear footsteps (sprinting most)
-and every rifle shot within 260 m, and anyone who sees a friend go down comes looking. Their aim
-gets better the longer they keep you in sight, and two body hits put you down.
+and every rifle shot within 260 m. Kill one and anyone within 45 m who sees it (or is standing
+right beside the body) goes on alert at once, though they need a moment to work out where the shot
+came from. Their aim gets better the longer they keep you in sight, and two body hits put you down.
 
 Enemies wear their mood: **yellow** on patrol, **orange** when suspicious or searching, **red** once
-they have spotted you. Every enemy rifle has a **laser sight** in the same colour, so you can see where
-each one is looking: faint while they patrol, sweeping slowly back and forth while they are suspicious
-or searching, bold once alert. While
-they aim at you the laser wavers and then holds steady: a steady laser means the next shot will
-probably hit. A laser pointed straight at your eyes shows as a glare at its rifle, in the same colour. You hear them: a "huh?" when one gets suspicious, a
-shout when one spots you, and their boots in the snow. Health comes back 5 s after the last hit.
+they have spotted you. Every enemy rifle has a **laser sight** in the same colour, so you can see
+where each one is looking: faint while they patrol, sweeping slowly back and forth while they are
+suspicious or searching, bold once alert. While they aim at you the laser wavers and then holds
+steady: a steady laser means the next shot will probably hit. Lasers stop in pine branches (bullets
+don't), so a crown between you hides the beam. You hear them: a "huh?" when one gets suspicious, a
+shout when one spots you, and their boots in the snow.
+
+When you are hit the screen flashes red and you hear the snap, the thump and your own grunt; the
+edges stay red while you are badly hurt. Health comes back 5 s after the last hit. A headshot on an
+enemy rings like struck steel.
 
 URL options: `?join=host:port&name=X&password=Y` joins directly, `?test` hides the click-to-play
 panel (for headless checks).
@@ -106,7 +111,7 @@ panel (for headless checks).
 | Key | Action |
 | --- | --- |
 | WASD | Move |
-| Shift | Sprint; while scoped, hold your breath (4 s, then you are winded and sway more) |
+| Shift | Sprint (gets you up from crouch or prone); while scoped, hold your breath (4 s, then you are winded and sway more) |
 | Space | Jump; from crouch or prone, stand up |
 | C / Z | Crouch / prone (press again to stand) |
 | Right mouse (hold) | Scope (12x). Sway is smallest prone, largest standing or moving |

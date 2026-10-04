@@ -9,12 +9,11 @@ import { ENEMY_COLOR, PAL } from './palette';
 // Enemy laser sights: a line from every enemy rifle to whatever it points at, so you can see
 // where they look, in the enemy's mood colour. Thin, faint and yellow while patrolling, stronger
 // and orange when suspicious or searching (their scanning sweeps it about), bold and red once
-// alert. A laser pointed straight at your eyes shows as a glare at its rifle, in the same colour.
-// Direction and length are smoothed so the lines glide rather than flicker, and each beam fades
+// alert. Beams stop in pine branches (the canopy sensors in world.ts, which only lasers look for),
+// so a laser in a tree's crown ends there. Direction and length are smoothed so the lines glide rather than flicker, and each beam fades
 // out over the last few metres before your eyes.
 
 const RANGE = 350; // m
-const GLARE_ANGLE = (3 * Math.PI) / 180; // rad off your eyes at which the glare starts
 const TURN_SMOOTH = 6; // 1/s: how quickly a laser follows its rifle
 const LENGTH_SMOOTH = 8; // 1/s: how quickly its length follows what it hits
 const NEAR_FADE = [2, 15]; // m from your eyes: beams fade out over this, so one aimed at you doesn't fill the view
@@ -32,8 +31,6 @@ const TIER: Record<AiState, Tier> = { patrol: 'calm', suspicious: 'wary', search
 
 export class Lasers {
   private lines: Record<Tier, { line: LineSegments2; mat: LineMaterial }>;
-  private glares: THREE.Sprite[] = [];
-  private glareMats: Record<Tier, THREE.SpriteMaterial>;
   private smooth = new Map<number, { dir: THREE.Vector3; len: number }>();
 
   constructor(private scene: THREE.Scene, private physics: RAPIER.World) {
@@ -54,28 +51,13 @@ export class Lasers {
       return { line, mat };
     };
     this.lines = { calm: make(ENEMY_COLOR.patrol, 1.5, 0.5), wary: make(ENEMY_COLOR.suspicious, 2, 0.75), alert: make(PAL.enemy, 3, 0.95) };
-    // Glare: a soft disc with a hot white centre, tinted per tier, drawn over everything at the muzzle.
-    const c = document.createElement('canvas');
-    c.width = c.height = 64;
-    const ctx = c.getContext('2d')!;
-    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-    g.addColorStop(0, 'rgba(255,255,255,1)');
-    g.addColorStop(0.2, 'rgba(255,255,255,0.9)');
-    g.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 64, 64);
-    const map = new THREE.CanvasTexture(c);
-    const glare = (color: number) => new THREE.SpriteMaterial({ map, color, transparent: true, depthTest: false, fog: false });
-    this.glareMats = { calm: glare(ENEMY_COLOR.patrol), wary: glare(ENEMY_COLOR.suspicious), alert: glare(PAL.enemy) };
   }
 
-  update(sources: Iterable<LaserSource>, camera: THREE.Camera, dt: number, width: number, height: number) {
+  update(sources: Iterable<LaserSource>, dt: number, width: number, height: number) {
     const pos: Record<Tier, number[]> = { calm: [], wary: [], alert: [] };
-    const from = new THREE.Vector3(), dir = new THREE.Vector3(), to = new THREE.Vector3(), eye = camera.getWorldPosition(new THREE.Vector3());
-    const toEye = new THREE.Vector3();
+    const from = new THREE.Vector3(), dir = new THREE.Vector3(), to = new THREE.Vector3();
     const turnK = 1 - Math.exp(-dt * TURN_SMOOTH), lenK = 1 - Math.exp(-dt * LENGTH_SMOOTH);
     const seen = new Set<number>();
-    let glares = 0;
     for (const s of sources) {
       seen.add(s.id);
       s.muzzle.getWorldPosition(from);
@@ -83,34 +65,13 @@ export class Lasers {
       let sm = this.smooth.get(s.id);
       if (!sm) this.smooth.set(s.id, (sm = { dir: dir.clone(), len: RANGE }));
       sm.dir.lerp(dir, turnK).normalize();
-      const hit = this.physics.castRay(new RAPIER.Ray(from, sm.dir), RANGE, true, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS);
+      const hit = this.physics.castRay(new RAPIER.Ray(from, sm.dir), RANGE, false); // sensors too: branches stop a laser
       sm.len += ((hit ? hit.timeOfImpact : RANGE) - sm.len) * lenK;
       to.copy(from).addScaledVector(sm.dir, sm.len);
-      const tier = s.locked ? 'alert' : TIER[s.state];
-      pos[tier].push(from.x, from.y, from.z, to.x, to.y, to.z);
-      // Glare: the beam reaches you and points (nearly) at your eyes.
-      toEye.copy(eye).sub(from);
-      const dEye = toEye.length();
-      const angle = sm.dir.angleTo(toEye.normalize());
-      if (angle < GLARE_ANGLE && sm.len > dEye - 2) {
-        let g = this.glares[glares];
-        if (!g) {
-          g = new THREE.Sprite(this.glareMats.alert);
-          g.renderOrder = 3;
-          this.scene.add(g);
-          this.glares.push(g);
-        }
-        const strength = 1 - angle / GLARE_ANGLE;
-        g.visible = true;
-        g.material = this.glareMats[tier];
-        g.position.copy(from);
-        g.scale.setScalar(dEye * 0.05 * (0.3 + strength));
-        glares++;
-      }
+      pos[s.locked ? 'alert' : TIER[s.state]].push(from.x, from.y, from.z, to.x, to.y, to.z);
     }
     for (const id of this.smooth.keys()) if (!seen.has(id)) this.smooth.delete(id);
     for (const tier of ['calm', 'wary', 'alert'] as const) this.set(this.lines[tier], pos[tier], width, height);
-    for (let i = glares; i < this.glares.length; i++) this.glares[i].visible = false;
   }
 
   private set(l: { line: LineSegments2; mat: LineMaterial }, pos: number[], width: number, height: number) {

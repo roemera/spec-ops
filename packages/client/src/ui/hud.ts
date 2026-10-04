@@ -88,11 +88,18 @@ export class Hud {
       this.drawStatus(s);
       this.drawAmmo(s);
       if (s.revive) this.drawRevive(s);
-      if (s.hurt > 0) {
-        const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.7);
+      // Red edges: a hard flash when hit, fading, over a steady glow while badly hurt.
+      const low = Math.max(0, 1 - s.health / (PLAYER_HEALTH * 0.6)); // from 60% health down
+      const edge = Math.min(0.9, 0.8 * s.hurt ** 0.7 + 0.45 * low);
+      if (edge > 0) {
+        const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * (0.25 - 0.1 * s.hurt), w / 2, h / 2, Math.max(w, h) * 0.7);
         g.addColorStop(0, 'rgba(227,34,26,0)');
-        g.addColorStop(1, `rgba(227,34,26,${(0.55 * s.hurt).toFixed(2)})`);
+        g.addColorStop(1, `rgba(227,34,26,${edge.toFixed(2)})`);
         ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+      }
+      if (s.hurt > 0.6) {
+        ctx.fillStyle = `rgba(227,34,26,${(0.6 * (s.hurt - 0.6)).toFixed(2)})`; // the whole screen, for an instant
         ctx.fillRect(0, 0, w, h);
       }
       if (s.protectedFor > 0) this.text(`SPAWN PROTECTION ${Math.ceil(s.protectedFor)}`, w / 2, 64, 13, s.scoped ? C.white : C.ink, 'center');

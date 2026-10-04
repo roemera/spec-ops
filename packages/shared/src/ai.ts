@@ -77,6 +77,7 @@ interface Enemy {
 const RADIUS = 0.35; // m, for walking round things
 const TURN_RATE = 5; // rad/s
 const SEARCH_LOOK = 10; // s looking around at a search point before giving up
+const KILL_WITNESS = 45; // m: enemies this close who see a friend killed go on alert
 const LOSE_TARGET = 15; // s out of sight before an alert enemy goes back to searching
 const BOUNDS = 40; // m inside the map edge they stay
 
@@ -150,15 +151,19 @@ export class EnemyAi {
     const res = e.health.applyHit(zone);
     if (res.killed) {
       e.dead = true;
-      // Anyone close who saw it go down comes looking for the shooter.
+      // Anyone near who saw it go down (or right next to it) goes on full alert against the shooter,
+      // with only a rough idea where the shot came from; their shouts bring the rest looking.
       const chest = { x: e.pos.x, y: e.pos.y + 1, z: e.pos.z };
       for (const o of this.enemies) {
         if (o.dead || o === e || o.state === 'alert') continue;
         const d = Math.hypot(o.pos.x - e.pos.x, o.pos.z - e.pos.z);
-        if (d > 45 || (d > 12 && this.obstacles.see(eye(o), chest) === 0)) continue;
-        o.meter.set(shooterId, Math.max(o.meter.get(shooterId) ?? 0, 0.8));
-        o.lastKnown = fuzz(shooterPos, 20, this.map);
-        this.setState(o, 'search');
+        if (d > KILL_WITNESS || (d > 12 && this.obstacles.see(eye(o), chest) === 0)) continue;
+        o.meter.set(shooterId, 1);
+        this.alert(o, shooterId, fuzz(shooterPos, 20, this.map));
+        // They don't know where the shot came from yet: slower to fire and to settle their aim
+        // than one who spotted you, so a sniper who ducks after a kill has a moment.
+        o.fireCd = rand(2, 3.5);
+        o.aimT = -1;
       }
     } else {
       e.meter.set(shooterId, 1);
@@ -327,7 +332,7 @@ export class EnemyAi {
   }
 
   private shoot(e: Enemy, p: PlayerView, vis: number, d: number): EnemyShot {
-    const aim = Math.min(1, e.aimT / ENEMY_AIM_TIME);
+    const aim = Math.max(0, Math.min(1, e.aimT / ENEMY_AIM_TIME));
     const distF = Math.max(0.08, Math.min(1, 1 - d / (ENEMY_FIRE_RANGE * 1.1)));
     const speed = Math.hypot(p.vel.x, p.vel.z);
     const moveF = speed > 4 ? 0.45 : speed > 0.5 ? 0.7 : 1;

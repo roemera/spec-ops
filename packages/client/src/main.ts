@@ -25,6 +25,8 @@ import { Remotes } from './remotes';
 import { Net } from './net';
 import { Menu, rejoin, type JoinChoice } from './ui/menu';
 
+const HURT_FLASH = 1.1; // s the red screen takes to fade after a hit
+
 const params = new URLSearchParams(location.search);
 // ?join=host&name=X&password=Y joins a server directly.
 // ?test hides the click-to-play panel (headless browsers cannot lock the pointer).
@@ -196,6 +198,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     // A wound here; the shooter reports it and the server decides what it did.
     fx.wound(point, dir, PAL.enemy);
     if (b.visual) return;
+    if (hit.zone === 'head' && hit.target >= ENEMY_ID_BASE) audio.play('headshot', { volume: 0.9 });
     net.sendHit(b.id, hit.target, hit.zone, arr(point), arr(dir));
     lastHit = { target: hit.target, zone: hit.zone, range: Math.round(b.start.distanceTo(point)) };
     mark(false);
@@ -317,7 +320,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
           health.health = msg.health;
           health.sinceHit = 0;
           hurtAt = time;
-          audio.play('hit', { volume: 1.3 });
+          audio.play('hurt', { volume: 1.4, rate: 0.95 + Math.random() * 0.1 });
           if (msg.health > 0) say(`HIT BY ${nameOf(msg.attacker)}  ·  ${ZONE_LABEL[msg.zone]}`, HUD_COLORS.red);
         } else if (msg.attacker === net.id && msg.target < ENEMY_ID_BASE) say(`HIT ${nameOf(msg.target)}  ·  ${ZONE_LABEL[msg.zone]}`);
       } else if (msg.t === 'enemyDown') {
@@ -458,6 +461,8 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     move.right = (input.isHeld('KeyD') ? 1 : 0) - (input.isHeld('KeyA') ? 1 : 0);
     wantScope = scopeOverride ?? (input.locked && input.mouseButtons.has(2));
     move.sprint = shift && !wantScope;
+    // Sprinting gets you up off your belly or knees (if there's room).
+    if (move.sprint && move.forward > 0 && player.stance !== 'stand') player.setStance('stand');
     move.scoped = wantScope;
 
     const clicks = input.takeClicks();
@@ -593,7 +598,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     const w = wind();
     world.update(dt, w);
     snow.update(dt, camera, w, viewCanvas.height);
-    lasers.update(enemies.lasers(), camera, dt, viewCanvas.width, viewCanvas.height);
+    lasers.update(enemies.lasers(), dt, viewCanvas.width, viewCanvas.height);
     const windSpeed = Math.hypot(w.x, w.z);
     windSound.setPosition(camera.position.clone().add(new THREE.Vector3(-w.x, 0.3 * windSpeed, -w.z).normalize().multiplyScalar(20)));
     windSound.setVolume(0.15 + Math.min(0.9, windSpeed * 0.1));
@@ -629,7 +634,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
         : null,
       revive: reviving && { name: nameOf(reviving.id), progress: reviving.progress },
       protectedFor: Math.max(0, protectedUntil - time),
-      hurt: Math.max(0, 1 - (time - hurtAt) / 0.6),
+      hurt: Math.max(0, 1 - (time - hurtAt) / HURT_FLASH),
     });
     requestAnimationFrame(frame);
   }
@@ -637,7 +642,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
 
   // Handle for debugging and automated checks.
   (window as unknown as { __game: unknown }).__game = {
-    THREE, player, rifle, map, physics, world, enemies, remotes, bullets, fire, net, camera, sway, health, weather, wind,
+    THREE, RAPIER, player, rifle, map, physics, world, enemies, remotes, bullets, fire, net, camera, sway, health, weather, wind,
     /** Tests: no wind, so aimAt lands exactly. */
     setCalm(on: boolean) { calmOverride.on = on; },
     /** Hold the scope / hold breath in tests (headless has no right mouse). */

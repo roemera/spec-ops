@@ -244,7 +244,13 @@ export class World {
     }
     // Bare trunk up to about a third of the height: you can see (and shoot) under the branches.
     chunk.trunks.push(m(-0.3, 0.28, h * 0.45 + 0.3)); // sunk a little so slopes don't show a gap
-    for (let i = 0; i < 3; i++) chunk.cones.push(m(h * (0.36 + i * 0.19), w * (1 - i * 0.27), h * 0.4));
+    for (let i = 0; i < 3; i++) {
+      const y = h * (0.36 + i * 0.19), r = w * (1 - i * 0.27);
+      chunk.cones.push(m(y, r, h * 0.4));
+      // The branches as a sensor: bullets and bodies pass through (they skip sensors), but an enemy
+      // laser stops in them. A little inside the drawn cone, so a beam grazing the tips gets by.
+      this.physics.createCollider(RAPIER.ColliderDesc.cone(h * 0.2, r * 0.85).setSensor(true).setTranslation(o.x, o.y + y + h * 0.2, o.z));
+    }
     // The visible trunk tapers and stops under the branches; above that only a thin core, hidden in them.
     this.trunkColliders(o, [[0, h * 0.22, 0.23], [h * 0.22, h * 0.45, 0.18], [h * 0.45, h, 0.12]]);
   }
