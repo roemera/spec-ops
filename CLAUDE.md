@@ -21,7 +21,8 @@ Mission rules are plain logic in `server/src/match.ts`; test them in Node with f
   work to do well, keep it simple and stylised rather than detailed.
 - Everything is generated in code: map (seeded), models (boxes/cylinders/low poly meshes), textures
   (small canvases, `render/textures.ts`), sounds (procedural). No asset files.
-- No minimap and no spotting markers. Information comes from looking and directional sound.
+- No minimap and no spotting enemies. The compass strip marks only the extraction pad and teammates;
+  enemies are found by looking and directional sound.
 - Trusted clients, dev-run server, password to join. No anti-cheat, no matchmaking.
 
 ## Code

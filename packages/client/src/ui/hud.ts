@@ -42,6 +42,16 @@ export interface HudState {
   revive: { name: string; progress: number } | null; // next to a downed teammate
   protectedFor: number; // s of spawn protection left
   hurt: number; // 0..1 red flash after being hit
+  markers: CompassMarker[]; // the extraction pad and teammates, on the compass strip
+}
+
+/** Something shown on the compass strip: where it lies (degrees, 0 = north) and how far. */
+export interface CompassMarker {
+  kind: 'extract' | 'friend';
+  heading: number;
+  dist: number; // m
+  label: string;
+  down?: boolean; // a teammate who needs reviving
 }
 
 export class Hud {
@@ -103,7 +113,7 @@ export class Hud {
         ctx.fillStyle = `rgba(227,34,26,${(0.6 * (s.hurt - 0.6)).toFixed(2)})`; // the whole screen, for an instant
         ctx.fillRect(0, 0, w, h);
       }
-      if (s.protectedFor > 0) this.text(`SPAWN PROTECTION ${Math.ceil(s.protectedFor)}`, w / 2, 64, 13, s.scoped ? C.white : C.ink, 'center');
+      if (s.protectedFor > 0) this.text(`SPAWN PROTECTION ${Math.ceil(s.protectedFor)}`, w / 2, 84, 13, s.scoped ? C.white : C.ink, 'center');
       if (s.message) this.text(s.message.text, w / 2, h * 0.64, 16, s.scoped && s.message.color === C.ink ? C.white : s.message.color, 'center', 700);
     }
     if (s.scores) this.drawScores(s.scores, s.myId);
@@ -188,7 +198,10 @@ export class Hud {
     ctx.stroke();
   }
 
-  /** A thin compass strip at the top. Directions only: no markers for anyone. */
+  /**
+   * A thin compass strip at the top, with markers for the extraction pad (orange diamond) and
+   * teammates (triangles, red when down). Off the strip, a marker waits at the edge it lies past.
+   */
   private drawCompass(s: HudState) {
     const { ctx, w } = this;
     const cx = w / 2, y = 26, span = 90, pxPerDeg = 2.4;
@@ -206,6 +219,39 @@ export class Hud {
       }
     }
     this.text(String(Math.round(s.viewHeading) % 360).padStart(3, '0'), cx, y + 18, 11, ink, 'center');
+    // Nearest drawn last, so it sits on top.
+    for (const m of [...s.markers].sort((a, b) => b.dist - a.dist)) {
+      const diff = ((m.heading - s.viewHeading + 540) % 360) - 180;
+      const off = Math.abs(diff) > span;
+      const x = cx + Math.max(-span, Math.min(span, diff)) * pxPerDeg + (off ? Math.sign(diff) * 10 : 0);
+      const color = m.kind === 'extract' ? C.signal : m.down ? C.red : s.scoped ? C.white : C.ink;
+      ctx.globalAlpha = off ? 0.6 : 1;
+      ctx.fillStyle = color;
+      ctx.strokeStyle = s.scoped ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      if (off) {
+        // An arrow at the end of the strip, pointing the way to turn.
+        const d = Math.sign(diff);
+        ctx.moveTo(x + d * 6, y);
+        ctx.lineTo(x - d * 4, y - 6);
+        ctx.lineTo(x - d * 4, y + 6);
+      } else if (m.kind === 'extract') {
+        ctx.moveTo(x, y - 8);
+        ctx.lineTo(x + 7, y);
+        ctx.lineTo(x, y + 8);
+        ctx.lineTo(x - 7, y);
+      } else {
+        ctx.moveTo(x, y + 7);
+        ctx.lineTo(x - 6, y - 5);
+        ctx.lineTo(x + 6, y - 5);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fill();
+      if (!off) this.text(`${m.label} ${Math.round(m.dist)}M`, x, y + 32, 10, color, 'center', 700);
+      ctx.globalAlpha = 1;
+    }
   }
 
   /** Bottom left: health and stance. */

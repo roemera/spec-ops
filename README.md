@@ -42,8 +42,10 @@ Every map is generated from a seed (`packages/shared/src/mapgen.ts`). A seed giv
 walled in by mountains: rolling hills, rocky ridges, a frozen creek, thick pine forest broken by open
 snowfields, boulders and fallen logs for cover. The squad inserts on one edge and has to reach the
 extraction pad on the opposite one (about 450 m away), past two to four outposts (cabins, a
-watchtower, sandbag walls) where the enemy will be. There is no marker: you get a bearing when you
-spawn, and orange smoke rises over the pad.
+watchtower, sandbag walls) where the enemy will be. You get a bearing when you spawn, orange smoke
+rises over the pad, and the compass at the top of the screen marks it (orange diamond, with the
+distance). Teammates show on the compass too, as triangles with their name and distance, red while
+they are down. Enemies are never marked.
 
 Every mission gets a new random map, unless `mapSeed` in the config or `MAP_SEED` fixes one. The
 seed is printed when a mission starts. The first 40% of the route is quiet: no outposts or patrols

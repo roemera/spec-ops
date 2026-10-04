@@ -18,7 +18,7 @@ import { Bullets, type Bullet, type SoldierHit } from './sim/bullets';
 import { addViewArms, buildRifle } from './models/rifle';
 import { strideFor } from './models/soldier';
 import { Input } from './input';
-import { Hud, HUD_COLORS } from './ui/hud';
+import { Hud, HUD_COLORS, type CompassMarker } from './ui/hud';
 import { Fx } from './fx';
 import { Audio } from './audio';
 import { Enemies } from './enemies';
@@ -158,8 +158,8 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   let message: { text: string; color: string; until: number } | null = null;
   const say = (text: string, color: string = HUD_COLORS.ink, seconds = MESSAGE_TIME) => (message = { text, color, until: time + seconds });
 
-  // The mission: get from the insertion point to the extraction pad. No marker: a bearing at the
-  // start, then the orange smoke over the pad.
+  // The mission: get from the insertion point to the extraction pad: a bearing at the start, the
+  // orange smoke over the pad, and its marker on the compass.
   function brief() {
     const p = player.pos, e = map.extract;
     const dist = Math.round(Math.hypot(e.x - p.x, e.z - p.z) / 10) * 10;
@@ -167,6 +167,21 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     const fromBearing = (weather.windFrom * 180) / Math.PI;
     const from = ['NORTH', 'NORTHEAST', 'EAST', 'SOUTHEAST', 'SOUTH', 'SOUTHWEST', 'WEST', 'NORTHWEST'][Math.round(fromBearing / 45) % 8];
     say(`EXTRACTION  ${bearingName(e.x - p.x, e.z - p.z)}  ${dist} M  ·  FOLLOW THE ORANGE SMOKE  ·  WIND ${strength} FROM THE ${from}`, HUD_COLORS.signal, BRIEFING_TIME);
+  }
+  /** The compass markers: the extraction pad, and every teammate still in the mission. */
+  function compassMarkers(): CompassMarker[] {
+    const p = player.pos;
+    const at = (x: number, z: number) => ({
+      heading: ((Math.atan2(x - p.x, -(z - p.z)) * 180) / Math.PI + 360) % 360,
+      dist: Math.hypot(x - p.x, z - p.z),
+    });
+    const out: CompassMarker[] = [{ kind: 'extract', label: 'EXFIL', ...at(map.extract.x, map.extract.z) }];
+    for (const r of remotes.byId.values()) {
+      if (r.life === 'dead') continue;
+      const q = r.model.root.position;
+      out.push({ kind: 'friend', label: nameOf(r.id).slice(0, 10), down: r.life === 'down', ...at(q.x, q.z) });
+    }
+    return out;
   }
   /** The server ends the mission when everyone standing is on the pad; until then, say who we wait for. */
   function onThePad() {
@@ -681,6 +696,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       revive: reviving && { name: nameOf(reviving.id), progress: reviving.progress },
       protectedFor: Math.max(0, protectedUntil - time),
       hurt: Math.max(0, 1 - (time - hurtAt) / HURT_FLASH),
+      markers: playing() ? compassMarkers() : [],
     });
     requestAnimationFrame(frame);
   }
