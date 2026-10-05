@@ -130,7 +130,7 @@ export class Menu {
   }
 
   /** Lobby: who's here and who's ready. */
-  lobby(players: PlayerInfo[], phase: Phase, countdown: number, myId: number, onReady: (ready: boolean) => void, onStart: () => void, quote: Quote) {
+  lobby(players: PlayerInfo[], phase: Phase, countdown: number, myId: number, onReady: (ready: boolean) => void, onStart: () => void) {
     this.root.classList.add('see-through');
     this.root.style.display = 'flex';
     const me = players.find((p) => p.id === myId);
@@ -144,7 +144,6 @@ export class Menu {
         <ul>${players.map((p) => `<li class="${p.ready ? 'ready' : ''}">${p.id === myId ? '&gt; ' : ''}${escape(p.name)}${p.ready ? ' - READY' : ''}</li>`).join('')}</ul>
         <div class="note">${status}</div>
         ${phase === 'lobby' ? `<button class="ready">${me?.ready ? 'NOT READY' : 'READY'}</button><button class="alt start">START NOW</button>` : ''}
-        ${quoteHtml(quote)}
       </div>`;
     this.root.querySelector('button.ready')?.addEventListener('click', () => onReady(!me?.ready));
     this.root.querySelector('button.start')?.addEventListener('click', onStart);

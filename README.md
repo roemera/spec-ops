@@ -73,10 +73,11 @@ friendly fire and no respawning:
 - At 0 health you go **down** and bleed out over 30 s. A teammate who holds **E** next to you for
   3 s gets you up with 50 health (they can't move or shoot meanwhile).
 - If you bleed out you are **out** until the next mission.
-- While down or out, and on the squad and mission-over screens, there is a quote, as old Call of Duty did: one of about 100
+- While down or out, and on the mission-over screen, there is a quote, as old Call of Duty did: one of about 100
   real Donald Trump quotes, mostly about war and soldiers, with the date and where it was said
   (`packages/client/src/quotes.ts`, each checked against the Truth Social archive or news reports).
-  Bleed out and the screen fades to black with the quote in white in the middle; each mission
+  Go down and the screen fades to black with the quote in white in the middle (the bleed-out
+  timer underneath, in red); each mission
   opens the same way, three seconds of black and a quote before the game fades in.
 - Health does not come back by itself. Medkits (+40) and a teammate's revive are the only way back.
 - Ammo runs out: you start with a full magazine and 15 spare rounds (carry up to 25). Each base has an

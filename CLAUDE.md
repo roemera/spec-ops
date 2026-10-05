@@ -35,7 +35,7 @@ Mission rules are plain logic in `server/src/match.ts`; test them in Node with f
 - Tuning numbers live in `packages/shared/src/constants.ts` and `hitzones.ts`.
 - Check: `npm run typecheck` and `npm run build`.
 - Run: `npm run dev` (game server + Vite together; default password `changeme`). Headless checks join
-  with `?test&join=localhost:5173&name=A&password=pw` (hides the click-to-play panel; `MAP_SEED=2`
+  with `?test&join=localhost:5173&name=A&password=pw` (hides the click-to-play prompt; `MAP_SEED=2`
   on the server for a fixed map). `window.__game` exposes the player, rifle, enemies, remotes, net,
   `fire()`, `aimAt(x, y, z)` (allows for bullet drop), `setScoped()` and `setHoldBreath()`.
   Headless Chromium renders slowly and game time is capped per frame, so give waits generous margins.

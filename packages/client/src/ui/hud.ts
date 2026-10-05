@@ -21,7 +21,6 @@ const STANCE_LABEL: Record<Stance, string> = { stand: 'STANDING', crouch: 'CROUC
 export interface HudState {
   time: number;
   locked: boolean;
-  everLocked: boolean; // the full instructions show only until the first time you click in
   scoped: boolean; // looking through the scope (fully raised)
   fovDeg: number; // vertical fov of the current view
   spreadRad: number; // hip-fire cone half-angle, drawn as the crosshair gap
@@ -44,8 +43,8 @@ export interface HudState {
   protectedFor: number; // s of spawn protection left
   hurt: number; // 0..1 red flash after being hit
   markers: CompassMarker[]; // the extraction pad and teammates, on the compass strip
-  /** Black over everything with a quote in white: after you bleed out, and as a mission opens. */
-  curtain: { quote: Quote; alpha: number; sub: string | null } | null;
+  /** Black over everything with a quote in white: while down or out, and as a mission opens. */
+  curtain: { quote: Quote; alpha: number; status: string | null; lines: string[] } | null; // status in red, lines under it
 }
 
 /** Something shown on the compass strip: where it lies (degrees, 0 = north) and how far. */
@@ -121,10 +120,7 @@ export class Hud {
     }
     if (s.curtain && s.curtain.alpha > 0) this.drawCurtain(s.curtain);
     if (s.scores) this.drawScores(s.scores, s.myId);
-    if (!s.locked) {
-      if (s.everLocked) this.drawGrabMouse();
-      else this.drawClickToPlay();
-    }
+    if (!s.locked) this.text('CLICK TO PLAY', w / 2, 110, 14, C.ink, 'center', 700);
   }
 
   /** Hip fire: four ticks around a dot, opened up by the spread. */
@@ -326,8 +322,9 @@ export class Hud {
     g.addColorStop(1, d.out ? 'rgba(245,247,249,0.8)' : 'rgba(227,34,26,0.55)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
+    if (s.curtain) return; // the black curtain carries the words
     const y = h * 0.3;
-    if (d.quote && !d.out) this.drawQuote(d.quote, y + 160); // out: the black curtain carries it
+    if (d.quote) this.drawQuote(d.quote, y + 160);
     if (d.out) {
       this.text('OUT', w / 2, y, 64, C.ink, 'center', 800);
       this.text('YOU BLED OUT  ·  WAITING FOR THE SQUAD', w / 2, y + 52, 15, C.ink, 'center');
@@ -339,7 +336,6 @@ export class Hud {
     this.text(d.help ? 'A TEAMMATE CAN GET YOU UP: STAY PUT' : 'NOBODY LEFT STANDING TO GET YOU UP', w / 2, y + 112, 13, C.inkSoft, 'center');
   }
 
-  /** A death-screen quote, wrapped, centred, with who said it and when underneath. */
   /** The old Call of Duty death screen: fade to black, the quote in white in the middle. */
   private drawCurtain(c: NonNullable<HudState['curtain']>) {
     const { ctx, w, h } = this;
@@ -369,10 +365,13 @@ export class Hud {
     ctx.fillStyle = '#f2f2f2';
     lines.forEach((l, i) => ctx.fillText(l, w / 2, top + i * lineH));
     this.text(`— DONALD J. TRUMP  ·  ${c.quote.when.toUpperCase()}`, w / 2, top + lines.length * lineH + 10, 12, 'rgba(242,242,242,0.6)', 'center', 700);
-    if (c.sub) this.text(c.sub, w / 2, h - 56, 13, 'rgba(242,242,242,0.5)', 'center', 700);
+    const by = h - 40 - c.lines.length * 24;
+    if (c.status) this.text(c.status, w / 2, by - 14, 18, C.red, 'center', 800);
+    c.lines.forEach((l, i) => this.text(l, w / 2, by + 16 + i * 24, 13, 'rgba(242,242,242,0.55)', 'center', 700));
     ctx.restore();
   }
 
+  /** A death-screen quote, wrapped, centred, with who said it and when underneath. */
   private drawQuote(q: Quote, top: number) {
     const { ctx, w } = this;
     const size = 17, lineH = 25, maxW = Math.min(640, w - 64);
@@ -427,38 +426,6 @@ export class Hud {
       const color = sc.id === myId ? C.red : C.ink;
       this.text(sc.name, x + 20, ry, 14, color);
       for (const [, value, right] of cols) this.text(value(sc), x + bw - right, ry, 14, color, 'right');
-    });
-  }
-
-  /** After the first time: a small strip, not the whole instructions panel. */
-  private drawGrabMouse() {
-    this.text('CLICK TO PLAY', this.w / 2, 70, 14, C.ink, 'center', 700);
-  }
-
-  private drawClickToPlay() {
-    const { ctx, w, h } = this;
-    const bw = 460, bh = 320, x = w / 2 - bw / 2, y = h / 2 - bh / 2;
-    ctx.fillStyle = C.paper;
-    ctx.fillRect(x, y, bw, bh);
-    ctx.fillStyle = C.red;
-    ctx.fillRect(x, y, bw, 4);
-    this.text('SPEC OPS', w / 2, y + 44, 30, C.ink, 'center', 800);
-    this.text('CLICK TO PLAY', w / 2, y + 80, 14, C.red, 'center', 700);
-    const help: Array<[string, string]> = [
-      ['WASD', 'MOVE'],
-      ['SHIFT', 'SPRINT  /  HOLD BREATH (SCOPED)'],
-      ['SPACE', 'JUMP'],
-      ['C  /  Z', 'CROUCH  /  PRONE'],
-      ['RIGHT MOUSE', 'SCOPE'],
-      ['LEFT MOUSE', 'FIRE'],
-      ['R', 'RELOAD'],
-      ['E (HOLD)', 'REVIVE A TEAMMATE'],
-      ['TAB', 'SCORES'],
-    ];
-    help.forEach(([k, v], i) => {
-      const ry = y + 118 + i * 21;
-      this.text(k, w / 2 - 12, ry, 12, C.ink, 'right', 700);
-      this.text(v, w / 2 + 12, ry, 12, C.inkSoft, 'left', 600);
     });
   }
 }

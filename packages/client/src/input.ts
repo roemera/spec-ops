@@ -8,7 +8,6 @@ export class Input {
   mouseDY = 0;
   mouseButtons = new Set<number>();
   clicks: Array<{ button: number; locked: boolean }> = []; // locked: was the mouse captured when clicked
-  everLocked = false;
 
   constructor(private target: HTMLElement) {
     window.addEventListener('keydown', (e) => {
@@ -31,9 +30,6 @@ export class Input {
     });
     window.addEventListener('mouseup', (e) => this.mouseButtons.delete(e.button));
     window.addEventListener('contextmenu', (e) => e.preventDefault());
-    document.addEventListener('pointerlockchange', () => {
-      if (this.locked) this.everLocked = true;
-    });
   }
 
   get locked() {
