@@ -210,7 +210,7 @@ export class World {
   /** A shared textured material per (texture, colour), for the props. */
   private mats = new Map<string, THREE.MeshLambertMaterial>();
   private mat(name: keyof ReturnType<typeof textures> | null, color: number, extra: THREE.MeshLambertMaterialParameters = {}) {
-    const key = `${name}:${color}:${JSON.stringify(Object.keys(extra))}`;
+    const key = `${name}:${color}:${JSON.stringify(extra)}`;
     let m = this.mats.get(key);
     if (!m) this.mats.set(key, (m = new THREE.MeshLambertMaterial({ color, map: name ? textures()[name] : null, ...extra })));
     return m;
@@ -242,7 +242,7 @@ export class World {
       return m;
     };
     const planks = this.mat('planks', 0xffffff), darkWood = this.mat('planks', 0x8a7d70), roofMetal = this.mat('metalRoof', 0xffffff);
-    const snowMat = this.mat('snow', PAL.snow), glass = this.mat(null, 0x3a2a18, { emissive: 0xffa448, emissiveIntensity: 0.42 }), stone = this.mat('rock', 0xb8b4ae);
+    const snowMat = this.mat('snow', PAL.snow), stone = this.mat('rock', 0xb8b4ae);
 
     switch (o.kind) {
       case 'rock': {
@@ -284,18 +284,22 @@ export class World {
         for (const [cx, cz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) box(0.22, h, 0.22, darkWood, (cx * w) / 2, h / 2, (cz * d) / 2, false);
         // Door (front, -z) in a frame, with a step.
         const doorX = w * 0.2;
-        box(1.3, 2.3, 0.08, darkWood, doorX, 1.15, -d / 2 - 0.04, false);
-        box(1.05, 2.05, 0.1, this.mat('planks', 0x6e5a48), doorX, 1.05, -d / 2 - 0.07, false, 1.2);
+        // Trim a few cm proud of the wall: too close for the depth buffer at range, so each layer is
+        // pulled forward in depth (polygon offset scales with distance, unlike a physical gap).
+        const proud = (layer: number) => ({ polygonOffset: true, polygonOffsetFactor: -layer, polygonOffsetUnits: -4 * layer });
+        box(1.3, 2.3, 0.08, this.mat('planks', 0x8a7d70, proud(1)), doorX, 1.15, -d / 2 - 0.04, false);
+        box(1.05, 2.05, 0.1, this.mat('planks', 0x6e5a48, proud(2)), doorX, 1.05, -d / 2 - 0.07, false, 1.2);
         box(1.6, 0.2, 0.6, stone, doorX, 0.1, -d / 2 - 0.35, false, 2);
         // Windows: side walls and the back, in a pale frame, lit warm from inside (someone's home).
         const windows: Array<[number, number, number]> = [[-1, 0, Math.PI / 2], [1, 0, -Math.PI / 2], [0, 1, Math.PI]];
+        const litGlass = this.mat(null, 0x3a2a18, { emissive: 0xffa448, emissiveIntensity: 0.42, ...proud(2) });
         for (const [sx, sz, rot] of windows) {
           const wx = (sx * w) / 2, wz = (sz * d) / 2;
-          const frame = mesh(boxUV(new THREE.BoxGeometry(1.4, 1.1, 0.1), 1), this.mat('planks', 0xe6ded2), wx, h * 0.58, wz);
+          const frame = mesh(boxUV(new THREE.BoxGeometry(1.4, 1.1, 0.1), 1), this.mat('planks', 0xe6ded2, proud(1)), wx, h * 0.58, wz);
           frame.rotation.y = rot;
-          const pane = mesh(new THREE.BoxGeometry(1.15, 0.85, 0.12), glass, wx, h * 0.58, wz);
+          const pane = mesh(new THREE.BoxGeometry(1.15, 0.85, 0.12), litGlass, wx, h * 0.58, wz);
           pane.rotation.y = rot;
-          const bar = mesh(new THREE.BoxGeometry(0.06, 0.85, 0.14), this.mat('planks', 0xe6ded2), wx, h * 0.58, wz);
+          const bar = mesh(new THREE.BoxGeometry(0.06, 0.85, 0.14), this.mat('planks', 0xe6ded2, proud(3)), wx, h * 0.58, wz);
           bar.rotation.y = rot;
         }
         // Gable and roof: the ridge runs front to back.
