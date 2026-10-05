@@ -32,6 +32,7 @@ import { Menu, rejoin, type JoinChoice } from './ui/menu';
 
 const INTRO_HOLD = 3; // s of black and a quote as a mission opens
 const INTRO_FADE = 1; // s fading in to the game after it
+const DEATH_HOLD = 5; // s from going down before the mission-over screen may cover the black quote screen
 
 const HURT_FLASH = 1.1; // s the red screen takes to fade after a hit
 
@@ -149,6 +150,8 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   let down: { by: string; zone: string; until: number; quote: Quote } | null = null;
   const wall = () => performance.now() / 1000; // the fades run on the real clock, not the (capped) game one
   let downAt = 0; // when you went down (wall clock): the screen fades to black from here
+  let resultsShown = true; // the mission-over panel is up (the black quote screen gives way to it)
+  let mission = 0; // counts missions, so a late mission-over panel can't land on the next one
   let intro: { quote: Quote; at: number } | null = null; // a mission opening: black, a quote, then the game
   let protectedUntil = 0, hurtAt = -10;
   let scores: Score[] = [];
@@ -327,6 +330,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
           enemies.clear(); // the server stood them all up again
           decals.clear(); // (pickups: the server sends the new list)
           intro = { quote: nextQuote(), at: wall() };
+          mission++;
         }
         phase = msg.phase;
         if (phase === 'live') menu.hide();
@@ -422,9 +426,16 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       } else if (msg.t === 'results') {
         scores = msg.scores;
         input.unlock();
-        menu.results(msg.success, msg.time, msg.scores, msg.seconds, net.id);
         intro = null;
-        audio.jingle(msg.success);
+        // Went down and that ended it (nobody left standing): hold the black quote screen first.
+        resultsShown = false;
+        const m = mission, wait = life !== 'up' ? Math.max(0, downAt + DEATH_HOLD - wall()) : 0;
+        setTimeout(() => {
+          if (m !== mission) return;
+          resultsShown = true;
+          menu.results(msg.success, msg.time, msg.scores, Math.round(msg.seconds - wait), net.id);
+          audio.jingle(msg.success);
+        }, wait * 1000);
       }
     };
     net.onState = (st) => remotes.receive(st, time);
@@ -646,8 +657,12 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
 
   /** Bled out: fade to black over 1.5 s. A mission opening: 3 s of black, then a 1 s fade in. */
   function curtain(): HudState['curtain'] {
-    if (playing() && life !== 'up' && down) {
+    if (life !== 'up' && (playing() || (phase === 'results' && !resultsShown))) {
+      // Rejoined already down: no record of the hit, but the same screen.
+      down ??= { by: 'THE ENEMY', zone: '', until: time, quote: nextQuote() };
+      if (!downAt) downAt = wall() - 1.5;
       const alpha = (wall() - downAt) / 1.5;
+      if (phase === 'results') return { quote: down.quote, alpha, status: 'MISSION FAILED', lines: ['NOBODY LEFT STANDING'] };
       if (life === 'dead') return { quote: down.quote, alpha, status: 'OUT', lines: ['YOU BLED OUT  ·  WAITING FOR THE SQUAD'] };
       const help = [...remotes.byId.values()].some((r) => r.life === 'up');
       return {
