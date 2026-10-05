@@ -73,7 +73,7 @@ friendly fire and no respawning:
 - At 0 health you go **down** and bleed out over 30 s. A teammate who holds **E** next to you for
   3 s gets you up with 50 health (they can't move or shoot meanwhile).
 - If you bleed out you are **out** until the next mission.
-- While down or out, and on the mission-over screen, there is a quote, as old Call of Duty did: one of about 100
+- While down or out, and as each mission opens, there is a quote on a black screen, as old Call of Duty did: one of about 100
   real Donald Trump quotes, mostly about war and soldiers, with the date and where it was said
   (`packages/client/src/quotes.ts`, each checked against the Truth Social archive or news reports).
   Go down and the screen fades to black with the quote in white in the middle (the bleed-out

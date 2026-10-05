@@ -422,7 +422,8 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       } else if (msg.t === 'results') {
         scores = msg.scores;
         input.unlock();
-        menu.results(msg.success, msg.time, msg.scores, msg.seconds, net.id, nextQuote());
+        menu.results(msg.success, msg.time, msg.scores, msg.seconds, net.id);
+        intro = null;
         audio.jingle(msg.success);
       }
     };
@@ -730,7 +731,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
       scores: input.isHeld('Tab') ? scores : null,
       myId: net.id,
       down: playing() && life !== 'up'
-        ? { by: down?.by ?? 'THE ENEMY', zone: down?.zone ?? '', bleedOut: (down?.until ?? time) - time, help: [...remotes.byId.values()].some((r) => r.life === 'up'), out: life === 'dead', quote: down?.quote ?? null }
+        ? { by: down?.by ?? 'THE ENEMY', zone: down?.zone ?? '', bleedOut: (down?.until ?? time) - time, help: [...remotes.byId.values()].some((r) => r.life === 'up'), out: life === 'dead' }
         : null,
       revive: reviving && { name: nameOf(reviving.id), progress: reviving.progress },
       protectedFor: Math.max(0, protectedUntil - time),
