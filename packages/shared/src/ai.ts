@@ -155,6 +155,12 @@ export class EnemyAi {
     const e = this.enemies.find((x) => x.id === id);
     if (!e || e.dead) return null;
     const res = e.health.applyHit(zone);
+    if (!res.killed) {
+      // One hit anywhere drops them.
+      res.damage += res.health;
+      res.health = e.health.health = 0;
+      res.killed = true;
+    }
     if (res.killed) {
       e.dead = true;
       // Anyone near who saw it go down (or right next to it) goes on full alert against the shooter,

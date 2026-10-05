@@ -80,9 +80,10 @@ friendly fire and no respawning:
   timer underneath, in red); each mission
   opens the same way, three seconds of black and a quote before the game fades in.
 - Health does not come back by itself. Medkits (+40) and a teammate's revive are the only way back.
-- Ammo runs out: you start with a full magazine and 15 spare rounds (carry up to 25). Each base has an
-  ammo box (15 rounds) and a medkit by a hut door; every enemy you kill drops 6 rounds, and three in
-  five carry a medkit. Walk over one to take it; whoever gets there first has it.
+- Ammo is unlimited: every reload fills the magazine (`UNLIMITED_AMMO` in constants.ts; turn it off
+  for 15 spare rounds, carrying up to 25, topped up from ammo boxes and the dead). Each base has a
+  medkit by a hut door, and three in five enemies you kill carry one. Walk over one to take it;
+  whoever gets there first has it.
 
 After the results (time, kills, revives, downs, accuracy) everyone goes back to the squad screen with
 a new map. Each page reloads itself to build the new map and rejoins on its own.
@@ -127,17 +128,17 @@ panel (for headless checks).
 | WASD | Move |
 | Shift | Sprint (gets you up from crouch or prone); while scoped, hold your breath (4 s, then you are winded and sway more) |
 | Space | Jump; from crouch or prone, stand up |
-| C / Z | Crouch / prone (press again to stand). While sprinting: slide on your knees / dive onto your belly |
+| C / Ctrl (or Z) | Crouch / prone (press again to stand). While sprinting: slide on your knees / dive onto your belly. Careful: Ctrl+W closes the browser tab |
 | Right mouse (hold) | Scope (12x). Sway is smallest prone, largest standing or moving |
 | Left mouse | Fire. Work the bolt after every shot (1.1 s) |
-| R | Reload (5-round magazine, from your spare rounds). Press R again while the needle is in the red to slap it home at once; near it, a quick finish; anywhere else it jams (+1.2 s) |
+| R | Reload (5-round magazine). Press R again while the needle is in the red to slap it home at once; near it, a quick finish; anywhere else it jams (+1.2 s) |
 | E (hold) | Revive a downed teammate next to you |
 | Tab | Scores |
 
 The rifle fires real bullets at 600 m/s with drop. The scope is zeroed at 100 m; the marks below the
 centre show where to hold for 200, 300 and 400 m. Moving targets need a lead.
 
-Damage: a head or body hit kills, two limb hits kill.
+Damage: any hit kills an enemy. Enemy hits on you: up to 50 at a time, so two put you down.
 
 ## Sound
 

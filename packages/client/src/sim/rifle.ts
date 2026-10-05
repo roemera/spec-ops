@@ -1,4 +1,4 @@
-import { ACTIVE_RELOAD, BOLT_TIME, MAG_SIZE, MAX_SPARE, RELOAD_GOOD_FINISH, RELOAD_JAM, RELOAD_TIME, START_SPARE } from '@spec-ops/shared';
+import { ACTIVE_RELOAD, BOLT_TIME, MAG_SIZE, MAX_SPARE, RELOAD_GOOD_FINISH, RELOAD_JAM, RELOAD_TIME, START_SPARE, UNLIMITED_AMMO } from '@spec-ops/shared';
 
 export type RifleEvent = 'bolted' | 'reloaded' | null;
 export type ActiveResult = 'perfect' | 'good' | 'jam';
@@ -43,7 +43,7 @@ export class Rifle {
 
   /** Start a magazine swap if it would help. Returns true if one started. */
   reload(): boolean {
-    if (this.reloadLeft > 0 || this.mag >= MAG_SIZE || this.spare <= 0) return false;
+    if (this.reloadLeft > 0 || this.mag >= MAG_SIZE || (this.spare <= 0 && !UNLIMITED_AMMO)) return false;
     this.boltLeft = 0;
     this.reloadLeft = this.reloadTotal = RELOAD_TIME;
     this.reloadT = 0;
@@ -76,9 +76,9 @@ export class Rifle {
       this.reloadT += dt;
       if (this.reloadLeft > 0) return null;
       // Rounds left in the old magazine go back in the pouch.
-      const take = Math.min(MAG_SIZE - this.mag, this.spare);
+      const take = UNLIMITED_AMMO ? MAG_SIZE - this.mag : Math.min(MAG_SIZE - this.mag, this.spare);
       this.mag += take;
-      this.spare -= take;
+      if (!UNLIMITED_AMMO) this.spare -= take;
       return 'reloaded';
     }
     if (this.boltLeft > 0) {

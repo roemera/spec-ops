@@ -1,4 +1,4 @@
-import { ACTIVE_RELOAD, BULLET_SPEED, GRAVITY, PLAYER_HEALTH, type Score, type Stance } from '@spec-ops/shared';
+import { ACTIVE_RELOAD, BULLET_SPEED, GRAVITY, PLAYER_HEALTH, UNLIMITED_AMMO, type Score, type Stance } from '@spec-ops/shared';
 import { accuracy } from './menu';
 import type { Quote } from '../quotes';
 
@@ -271,8 +271,8 @@ export class Hud {
     const { ctx, w, h } = this;
     const ink = s.scoped ? C.white : C.ink;
     const x = w - 28, y = h - 62;
-    const spare = `/ ${s.spare}`;
-    this.text(spare, x, y, 14, s.spare === 0 ? C.red : s.scoped ? 'rgba(255,255,255,0.6)' : C.inkSoft, 'right');
+    const spare = UNLIMITED_AMMO ? '/ ∞' : `/ ${s.spare}`;
+    this.text(spare, x, y, 14, s.spare === 0 && !UNLIMITED_AMMO ? C.red : s.scoped ? 'rgba(255,255,255,0.6)' : C.inkSoft, 'right');
     ctx.font = `600 14px ${FONT}`;
     this.text(String(s.mag), x - ctx.measureText(spare).width - 8, y - 2, 30, s.mag === 0 ? C.red : ink, 'right', 700);
     if (s.busy === 'reload') this.drawReload(s);
@@ -283,7 +283,7 @@ export class Hud {
       ctx.fillStyle = ink;
       ctx.fillRect(x - bw, y + 22, bw * s.busyProgress, 3);
       this.text('BOLT', x - bw, y + 34, 10, ink, 'left', 700);
-    } else if (s.mag === 0) this.text(s.spare ? 'R  RELOAD' : 'NO AMMO', x, y + 26, 11, C.red, 'right', 700);
+    } else if (s.mag === 0) this.text(s.spare || UNLIMITED_AMMO ? 'R  RELOAD' : 'NO AMMO', x, y + 26, 11, C.red, 'right', 700);
   }
 
   /**

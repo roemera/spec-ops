@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
-  MAX_SPARE, PICKUP_RANGE,
+  MAX_SPARE, PICKUP_RANGE, UNLIMITED_AMMO,
   BULLET_SPEED, BREATH_RECOVER, ENEMY_ID_BASE, GRAVITY, HIP_SPREAD, HOLD_BREATH, Health, PHYSICS_HZ, RECOIL_PITCH,
   EXTRACT_RADIUS, RECOIL_SETTLE, REVIVE_RANGE, REVIVE_TIME, SCOPE_FOV, SCOPE_IN_TIME, SPAWN_PROTECTION, STATE_HZ, SWAY,
   ZONE_LABEL, generateMap, weatherFor, windAt, type Life,
@@ -517,15 +517,16 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
     move.sprint = shift && !wantScope;
     for (const code of input.takePresses()) {
       audio.unlock();
-      // C: crouch (or up from prone to a crouch). Z: prone, or back up. Space: jump, or stand up.
+      // C: crouch (or up from prone to a crouch). Ctrl (or Z): prone, or back up. Space: jump, or stand up.
       // Either while sprinting: a slide on your knees, or a dive onto your belly.
       if (code === 'ShiftLeft' || code === 'ShiftRight') sprintStands = true;
       const sprinting = move.sprint && move.forward > 0 && player.stance === 'stand';
-      if ((code === 'KeyC' || code === 'KeyZ') && sprinting && player.startSlide(code === 'KeyC' ? 'crouch' : 'prone')) {
+      const prone = code === 'ControlLeft' || code === 'ControlRight' || code === 'KeyZ';
+      if ((code === 'KeyC' || prone) && sprinting && player.startSlide(code === 'KeyC' ? 'crouch' : 'prone')) {
         sprintStands = false; // still holding Shift after the slide: stay down until it's pressed again
         audio.play('slide', { volume: code === 'KeyC' ? 0.5 : 0.65 });
       } else if (code === 'KeyC') player.setStance(player.stance === 'crouch' ? 'stand' : 'crouch');
-      else if (code === 'KeyZ') player.setStance(player.stance === 'prone' ? 'stand' : 'prone') || player.setStance('crouch');
+      else if (prone) player.setStance(player.stance === 'prone' ? 'stand' : 'prone') || player.setStance('crouch');
       if (code === 'Space') {
         if (player.stance === 'stand') move.jump = true;
         else player.setStance('stand');
@@ -636,7 +637,7 @@ function runGame(menu: Menu, net: Net, welcome: Welcome, choice: JoinChoice) {
   function collectPickups() {
     if (!controlling()) return;
     for (const p of pickups.near(player.pos.x, player.pos.z, PICKUP_RANGE)) {
-      const wants = p.kind === 'ammo' ? rifle.spare < MAX_SPARE : health.health < health.max;
+      const wants = p.kind === 'ammo' ? !UNLIMITED_AMMO && rifle.spare < MAX_SPARE : health.health < health.max;
       if (!wants || time - (asked.get(p.id) ?? -10) < 1) continue;
       asked.set(p.id, time);
       net.sendPickup(p.id);

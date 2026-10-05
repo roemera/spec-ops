@@ -37,6 +37,7 @@ export const MAG_SIZE = 5;
 // Ammo is limited: spare rounds come from ammo boxes at the bases and off the dead.
 export const START_SPARE = 15; // rounds carried besides the loaded magazine
 export const MAX_SPARE = 25;
+export const UNLIMITED_AMMO = true; // reloads never run out: the spare count is ignored (and ammo boxes left alone)
 export const AMMO_BOX = 15; // rounds in a base's ammo box
 export const AMMO_DROP = 6; // rounds off a body
 export const MEDKIT_DROP_CHANCE = 0.6; // a body carries a medkit
